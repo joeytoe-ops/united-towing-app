@@ -349,21 +349,21 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
         </div>
       </div>
       <div style={{padding:"20px 24px",maxWidth:1200,margin:"0 auto"}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:12,marginBottom:20}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10,marginBottom:20}}>
           {[
             {label:"Total jobs",val:jobs.length,sub:"all time",bg:C.bg,color:C.dark},
-            {label:"Collected",val:formatMoney(totalCollected),sub:`${paidJobs.length} paid`,bg:C.lightGreen,color:C.success},
-            {label:"Unpaid",val:formatMoney(totalUnpaid),sub:`${unpaidJobs.length} jobs`,bg:C.lightRed,color:C.danger},
+            {label:"Collected",val:"$"+Math.round(totalCollected).toLocaleString(),sub:`${paidJobs.length} paid`,bg:C.lightGreen,color:C.success},
+            {label:"Unpaid",val:"$"+Math.round(totalUnpaid).toLocaleString(),sub:`${unpaidJobs.length} jobs`,bg:C.lightRed,color:C.danger},
             {label:"Missing info",val:missingJobs.length,sub:"no price",bg:C.lightYellow,color:C.warning}
           ].map((m,i)=>(
-            <div key={i} style={{background:m.bg,borderRadius:10,padding:"14px 16px",overflow:"hidden"}}>
+            <div key={i} style={{background:m.bg,borderRadius:10,padding:"12px 14px",overflow:"hidden"}}>
               <div style={{fontSize:11,fontWeight:600,color:m.color,textTransform:"uppercase",letterSpacing:0.5}}>{m.label}</div>
-              <div style={{fontSize:20,fontWeight:700,color:m.color,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.val}</div>
+              <div style={{fontSize:22,fontWeight:700,color:m.color,marginTop:2}}>{m.val}</div>
               <div style={{fontSize:11,color:m.color,opacity:0.7}}>{m.sub}</div>
             </div>
           ))}
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr",gap:16,marginBottom:20}}>
           <div style={{background:C.white,borderRadius:10,padding:"16px 20px",boxShadow:C.cardShadow}}>
             <div style={{fontSize:15,fontWeight:700,color:C.dark,marginBottom:12}}>Top unpaid accounts</div>
             {topAccounts.length===0?<div style={{fontSize:13,color:C.muted,padding:16,textAlign:"center"}}>No unpaid accounts</div>:
@@ -395,27 +395,22 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
               ))}
             </div>
           </div>
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"fixed"}}>
-              <thead><tr style={{borderBottom:`1.5px solid ${C.border}`}}>
-                {[{h:"Date",w:"11%"},{h:"Vehicle",w:"20%"},{h:"Customer",w:"16%"},{h:"Route",w:"22%"},{h:"Amount",w:"11%"},{h:"Status",w:"10%"},{h:"",w:"10%"}].map((col,i)=>(
-                  <th key={i} style={{textAlign:i===4?"right":i===5?"center":"left",padding:"8px 4px",fontWeight:600,color:C.muted,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,width:col.w}}>{col.h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {filtered.slice(0,50).map(j=>(
-                  <tr key={j.id} style={{borderBottom:`1px solid ${C.border}`,cursor:"pointer"}} onClick={()=>setEditing(j)} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <td style={{padding:"10px 4px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{formatDate(j.createdAt)}</td>
-                    <td style={{padding:"10px 4px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{[j.vehicle.color,j.vehicle.make,j.vehicle.model].filter(Boolean).join(" ")||"\u2014"}</td>
-                    <td style={{padding:"10px 4px",fontWeight:j.customer.name?500:400,color:j.customer.name?C.dark:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{j.customer.name||"\u2014"}</td>
-                    <td style={{padding:"10px 4px",color:C.muted,fontSize:12,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{[j.pickup,j.dropoff].filter(Boolean).join(" \u2192 ")||"\u2014"}</td>
-                    <td style={{padding:"10px 4px",textAlign:"right",fontWeight:600,whiteSpace:"nowrap"}}>{j.price&&!isNaN(j.price)?formatMoney(j.price):<span style={{color:C.warning}}>{"\u2014"}</span>}</td>
-                    <td style={{padding:"10px 4px",textAlign:"center",whiteSpace:"nowrap"}}><StatusBadge status={j.status} price={j.price} /></td>
-                    <td style={{padding:"10px 4px",textAlign:"center",whiteSpace:"nowrap"}}><span style={{color:"#5588cc",fontSize:12,fontWeight:600}}>Edit</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div>
+            {filtered.slice(0,50).map(j=>(
+              <div key={j.id} onClick={()=>setEditing(j)} style={{padding:"12px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:600,color:C.dark}}>{[j.vehicle.color,j.vehicle.make,j.vehicle.model].filter(Boolean).join(" ")||"No vehicle info"}</div>
+                    <div style={{fontSize:13,color:C.muted,marginTop:2}}>{j.customer.name||"No customer"} &middot; {formatDate(j.createdAt)}</div>
+                  </div>
+                  <div style={{textAlign:"right",marginLeft:12}}>
+                    <div style={{fontSize:15,fontWeight:700}}>{j.price&&!isNaN(j.price)?formatMoney(j.price):<span style={{color:C.warning,fontSize:13}}>No price</span>}</div>
+                    <div style={{marginTop:4}}><StatusBadge status={j.status} price={j.price} /></div>
+                  </div>
+                </div>
+                {(j.pickup||j.dropoff)&&<div style={{fontSize:12,color:C.muted}}>{[j.pickup,j.dropoff].filter(Boolean).join(" \u2192 ")}</div>}
+              </div>
+            ))}
           </div>
           {filtered.length>50&&<div style={{textAlign:"center",padding:12,fontSize:12,color:C.muted}}>Showing 50 of {filtered.length}</div>}
           {filtered.length===0&&<div style={{textAlign:"center",padding:24,fontSize:14,color:C.muted}}>No jobs match this filter</div>}
