@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 
 const APP_PIN = "united149";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbxn1SFWfILSu-JGrAd9pYAuEgS6HG3rPpMlSS8s-ExPH2BnJTkJKTX42-yNo57B-G7RAw/exec";
 
 const PARTNERS = [
   "JC Auto","Gabe Citgo","Karls Auto Body","Tasca Ford","Hartsdale Mobil",
@@ -14,9 +15,9 @@ const PAYMENT_TYPES = ["Cash","Zelle","Check","Credit Card","Invoice Later","Pen
 const STATUSES = { PAID:"paid", UNPAID:"unpaid", MISSING:"missing" };
 const TAX_RATE = 0.08375;
 
-function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
-function formatDate(d) { if (!d) return "\u2014"; const dt=new Date(d); return `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)}`; }
-function formatMoney(n) { if (n==null||isNaN(n)) return "\u2014"; return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function generateId() { return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function formatDate(d) { if(!d) return "\u2014"; const dt=new Date(d); return `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)}`; }
+function formatMoney(n) { if(n==null||isNaN(n)) return "\u2014"; return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function daysSince(d) { return Math.floor((Date.now()-new Date(d).getTime())/86400000); }
 
 const emptyJob = () => ({
@@ -24,13 +25,47 @@ const emptyJob = () => ({
   vehicle:{color:"",make:"",model:"",year:"",vin:"",plate:""},
   customer:{name:"",phone:"",isPartner:false},
   pickup:"", dropoff:"", serviceType:"Tow", price:"", paymentType:"Cash",
-  status:STATUSES.UNPAID, notes:"", receiptGenerated:false, paidDate:null,
+  status:STATUSES.UNPAID, notes:"",
+  vehiclePhoto:null, registrationPhoto:null,
+  receiptGenerated:false, paidDate:null,
   invoiceDetails:{subtotal:"",tax:"",total:"",tolls:"",ccFee:""}
 });
 
-const STORAGE_KEY = "ut-jobs-v1";
+const STORAGE_KEY = "ut-jobs-v2";
 function loadJobs() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]"); } catch { return []; } }
 function saveJobs(jobs) { localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs)); }
+
+async function syncToSheets(job) {
+  try {
+    const dt = new Date(job.createdAt);
+    await fetch(SHEETS_URL, {
+      method:"POST", mode:"no-cors",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        id: job.id,
+        date: `${dt.getMonth()+1}/${dt.getDate()}/${dt.getFullYear()}`,
+        time: dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),
+        vehicleColor: job.vehicle.color,
+        vehicleMake: job.vehicle.make,
+        vehicleModel: job.vehicle.model,
+        vehicleYear: job.vehicle.year,
+        vin: job.vehicle.vin,
+        plate: job.vehicle.plate,
+        customerName: job.customer.name,
+        customerPhone: job.customer.phone,
+        pickup: job.pickup,
+        dropoff: job.dropoff,
+        serviceType: job.serviceType,
+        price: job.price,
+        paymentType: job.paymentType,
+        status: job.status,
+        notes: job.notes,
+        vehiclePhoto: job.vehiclePhoto ? "Yes" : "",
+        registrationPhoto: job.registrationPhoto ? "Yes" : ""
+      })
+    });
+  } catch(err) { console.error("Sheets sync error:", err); }
+}
 
 const C = {
   bg:"#f7f6f3",white:"#ffffff",dark:"#1a1a2e",accent:"#2d6a4f",
@@ -40,12 +75,42 @@ const C = {
 };
 const baseBtn = {padding:"10px 20px",borderRadius:8,border:"none",cursor:"pointer",fontSize:14,fontWeight:600,transition:"all 0.15s"};
 
+function PhotoCapture({ label, icon, value, onChange }) {
+  const inputRef = useRef(null);
+  const [preview, setPreview] = useState(value);
+  const handleCapture = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => { setPreview(reader.result); onChange(reader.result); };
+    reader.readAsDataURL(file);
+  };
+  const handleClear = (e) => { e.stopPropagation(); setPreview(null); onChange(null); if(inputRef.current) inputRef.current.value=""; };
+  return (
+    <div>
+      <div style={{fontSize:12,fontWeight:600,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>{label}</div>
+      {preview ? (
+        <div style={{position:"relative",borderRadius:8,overflow:"hidden",border:`1.5px solid ${C.border}`}}>
+          <img src={preview} alt={label} style={{width:"100%",height:120,objectFit:"cover",display:"block"}} />
+          <button onClick={handleClear} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.6)",color:"#fff",border:"none",borderRadius:"50%",width:24,height:24,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>&times;</button>
+        </div>
+      ) : (
+        <div onClick={()=>inputRef.current?.click()} style={{border:`1.5px dashed ${C.border}`,borderRadius:8,padding:"20px 8px",textAlign:"center",color:C.muted,fontSize:12,cursor:"pointer",background:C.white}}>
+          <div style={{fontSize:22,marginBottom:2}}>{icon}</div>
+          Tap to capture
+        </div>
+      )}
+      <input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={handleCapture} style={{display:"none"}} />
+    </div>
+  );
+}
+
 function PasswordGate({ onAuth }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (pin.toLowerCase() === APP_PIN) { localStorage.setItem("ut-auth","1"); onAuth(); }
+    if (pin.toLowerCase()===APP_PIN) { localStorage.setItem("ut-auth","1"); onAuth(); }
     else { setError(true); setTimeout(()=>setError(false),2000); }
   };
   return (
@@ -53,8 +118,7 @@ function PasswordGate({ onAuth }) {
       <form onSubmit={handleSubmit} style={{textAlign:"center",padding:40}}>
         <div style={{fontSize:24,fontWeight:700,color:"#fff",marginBottom:4}}>United Towing</div>
         <div style={{fontSize:13,color:"#aaa",marginBottom:24}}>Enter access code</div>
-        <input value={pin} onChange={e=>{setPin(e.target.value);setError(false);}} type="password" placeholder="Access code"
-          autoFocus
+        <input value={pin} onChange={e=>{setPin(e.target.value);setError(false);}} type="password" placeholder="Access code" autoFocus
           style={{padding:"12px 16px",fontSize:16,borderRadius:8,border:error?"2px solid #c1292e":"2px solid #444",background:"#2a2a3e",color:"#fff",width:220,textAlign:"center",outline:"none",display:"block",margin:"0 auto 12px"}} />
         <button type="submit" style={{...baseBtn,background:"#fff",color:C.dark,width:220}}>Enter</button>
         {error && <div style={{color:"#c1292e",fontSize:13,marginTop:10}}>Wrong code</div>}
@@ -67,20 +131,26 @@ function CaptureForm({ onSubmit, onCancel }) {
   const [job, setJob] = useState(emptyJob());
   const [customCustomer, setCustomCustomer] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const update = (path,val) => {
     setJob(j => { const c=JSON.parse(JSON.stringify(j)); const k=path.split("."); let r=c; for(let i=0;i<k.length-1;i++) r=r[k[i]]; r[k[k.length-1]]=val; return c; });
   };
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!job.customer.name && !customCustomer) return;
-    const final={...job}; if(!final.price||isNaN(final.price)) final.status=STATUSES.MISSING;
-    onSubmit(final); setSubmitted(true);
+    const final={...job};
+    if(!final.price||isNaN(final.price)) final.status=STATUSES.MISSING;
+    setSyncing(true);
+    await syncToSheets(final);
+    onSubmit(final);
+    setSyncing(false);
+    setSubmitted(true);
     setTimeout(()=>{setSubmitted(false);setJob(emptyJob());setCustomCustomer(false);},1800);
   };
   if (submitted) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}>
-      <div style={{textAlign:"center"}}><div style={{fontSize:48,marginBottom:12}}>&#10003;</div>
-      <div style={{fontSize:22,fontWeight:700,color:C.dark}}>Job logged</div>
-      <div style={{fontSize:14,color:C.muted,marginTop:4}}>Joey will handle the rest</div></div>
+      <div style={{textAlign:"center"}}><div style={{fontSize:48,marginBottom:12,color:C.success}}>&#10003;</div>
+      <div style={{fontSize:22,fontWeight:700,color:C.dark}}>Job logged &amp; synced</div>
+      <div style={{fontSize:14,color:C.muted,marginTop:4}}>Saved to Google Sheets</div></div>
     </div>
   );
   const inputStyle={width:"100%",padding:"11px 12px",fontSize:15,borderRadius:8,border:`1.5px solid ${C.border}`,background:C.white,boxSizing:"border-box",outline:"none",fontFamily:"inherit"};
@@ -140,12 +210,18 @@ function CaptureForm({ onSubmit, onCancel }) {
           <label style={labelStyle}>License plate (optional)</label>
           <input value={job.vehicle.plate} onChange={e=>update("vehicle.plate",e.target.value)} placeholder="e.g. ABC 1234" style={inputStyle} />
         </div>
-        <div style={{marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          <PhotoCapture label="Vehicle photo" icon="&#128247;" value={job.vehiclePhoto} onChange={v=>setJob(j=>({...j,vehiclePhoto:v}))} />
+          <PhotoCapture label="Registration photo" icon="&#128196;" value={job.registrationPhoto} onChange={v=>setJob(j=>({...j,registrationPhoto:v}))} />
+        </div>
+        <div style={{marginBottom:16}}>
           <label style={labelStyle}>Notes (optional)</label>
           <input value={job.notes} onChange={e=>update("notes",e.target.value)} placeholder="AAA referral, paid tip, etc." style={inputStyle} />
         </div>
-        <button onClick={handleSubmit} style={{...baseBtn,width:"100%",padding:14,fontSize:16,background:C.dark,color:"#fff",borderRadius:10}}>Log job</button>
-        <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:8}}>Auto-saves date, time &amp; driver</p>
+        <button onClick={handleSubmit} disabled={syncing} style={{...baseBtn,width:"100%",padding:14,fontSize:16,background:syncing?"#666":C.dark,color:"#fff",borderRadius:10}}>
+          {syncing ? "Syncing..." : "Log job"}
+        </button>
+        <p style={{textAlign:"center",fontSize:11,color:C.muted,marginTop:8}}>Syncs to Google Sheets automatically</p>
         {onCancel && <button onClick={onCancel} style={{...baseBtn,width:"100%",marginTop:8,background:"transparent",color:C.muted,fontSize:13,border:`1px solid ${C.border}`}}>Back to dashboard</button>}
       </div>
     </div>
@@ -171,6 +247,12 @@ function InvoicePanel({ job, onSave, onClose }) {
           <h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.dark}}>Complete invoice</h3>
           <button onClick={onClose} style={{...baseBtn,padding:"6px 12px",background:C.border,color:C.dark,fontSize:12}}>Close</button>
         </div>
+        {(j.vehiclePhoto||j.registrationPhoto)&&(
+          <div style={{display:"grid",gridTemplateColumns:j.vehiclePhoto&&j.registrationPhoto?"1fr 1fr":"1fr",gap:8,marginBottom:14}}>
+            {j.vehiclePhoto&&<div><div style={{fontSize:11,fontWeight:600,color:C.muted,marginBottom:4,textTransform:"uppercase"}}>Vehicle photo</div><img src={j.vehiclePhoto} alt="Vehicle" style={{width:"100%",height:120,objectFit:"cover",borderRadius:6}} /></div>}
+            {j.registrationPhoto&&<div><div style={{fontSize:11,fontWeight:600,color:C.muted,marginBottom:4,textTransform:"uppercase"}}>Registration</div><img src={j.registrationPhoto} alt="Registration" style={{width:"100%",height:120,objectFit:"cover",borderRadius:6}} /></div>}
+          </div>
+        )}
         <div style={{background:C.bg,borderRadius:8,padding:14,marginBottom:14}}>
           <div style={{fontSize:13,fontWeight:700,color:C.dark,marginBottom:10}}>Vehicle details</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
@@ -192,8 +274,8 @@ function InvoicePanel({ job, onSave, onClose }) {
           </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
-          <div><label style={labelStyle}>Pickup location</label><input value={j.pickup} onChange={e=>update("pickup",e.target.value)} style={inputStyle} /></div>
-          <div><label style={labelStyle}>Dropoff location</label><input value={j.dropoff} onChange={e=>update("dropoff",e.target.value)} style={inputStyle} /></div>
+          <div><label style={labelStyle}>Pickup</label><input value={j.pickup} onChange={e=>update("pickup",e.target.value)} style={inputStyle} /></div>
+          <div><label style={labelStyle}>Dropoff</label><input value={j.dropoff} onChange={e=>update("dropoff",e.target.value)} style={inputStyle} /></div>
         </div>
         <div style={{background:C.bg,borderRadius:8,padding:14,marginBottom:14}}>
           <div style={{fontSize:13,fontWeight:700,color:C.dark,marginBottom:10}}>Pricing</div>
@@ -212,7 +294,7 @@ function InvoicePanel({ job, onSave, onClose }) {
         <div style={{marginBottom:14}}><label style={labelStyle}>Notes</label><textarea value={j.notes} onChange={e=>update("notes",e.target.value)} rows={2} style={{...inputStyle,resize:"vertical"}} /></div>
         <div style={{display:"flex",gap:8}}>
           {j.status!==STATUSES.PAID&&<button onClick={markPaid} style={{...baseBtn,flex:1,background:C.success,color:"#fff"}}>Mark as paid</button>}
-          <button onClick={()=>{const saved={...j,invoiceDetails:{...j.invoiceDetails,subtotal,tax,total,ccFee},receiptGenerated:true};onSave(saved);}} style={{...baseBtn,flex:1,background:C.dark,color:"#fff"}}>Save &amp; generate receipt</button>
+          <button onClick={()=>{const saved={...j,invoiceDetails:{...j.invoiceDetails,subtotal,tax,total,ccFee},receiptGenerated:true};onSave(saved);}} style={{...baseBtn,flex:1,background:C.dark,color:"#fff"}}>Save invoice</button>
         </div>
         {j.status===STATUSES.PAID&&<div style={{textAlign:"center",marginTop:10,fontSize:13,color:C.success,fontWeight:600}}>Paid on {formatDate(j.paidDate)}</div>}
       </div>
@@ -251,20 +333,16 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
   else if(filter==="unpaid") filtered=unpaidJobs;
   else if(filter==="missing") filtered=missingJobs;
   else if(filter==="paid") filtered=paidJobs;
-
   if(search){const s=search.toLowerCase();filtered=filtered.filter(j=>(j.customer.name||"").toLowerCase().includes(s)||(j.vehicle.make||"").toLowerCase().includes(s)||(j.vehicle.model||"").toLowerCase().includes(s)||(j.vehicle.color||"").toLowerCase().includes(s)||(j.pickup||"").toLowerCase().includes(s)||(j.dropoff||"").toLowerCase().includes(s));}
   filtered=[...filtered].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
 
-  const handleSave=(updated)=>{setJobs(prev=>{const next=prev.map(j=>j.id===updated.id?updated:j);saveJobs(next);return next;});setEditing(null);};
+  const handleSave=(updated)=>{setJobs(prev=>{const next=prev.map(j=>j.id===updated.id?updated:j);saveJobs(next);return next;});setEditing(null);syncToSheets(updated);};
   const maxAging=Math.max(...Object.values(aging),1);
 
   return (
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
       <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,padding:"14px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-        <div>
-          <div style={{fontSize:18,fontWeight:700,color:C.dark}}>United Towing &amp; Transport</div>
-          <div style={{fontSize:12,color:C.muted}}>Invoicing dashboard</div>
-        </div>
+        <div><div style={{fontSize:18,fontWeight:700,color:C.dark}}>United Towing &amp; Transport</div><div style={{fontSize:12,color:C.muted}}>Invoicing dashboard</div></div>
         <div style={{display:"flex",gap:8}}>
           <button onClick={onNewJob} style={{...baseBtn,background:C.dark,color:"#fff",fontSize:13}}>+ Log new job</button>
           <button onClick={onLogout} style={{...baseBtn,background:C.border,color:C.muted,fontSize:12}}>Logout</button>
@@ -285,7 +363,6 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
             </div>
           ))}
         </div>
-
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
           <div style={{background:C.white,borderRadius:10,padding:"16px 20px",boxShadow:C.cardShadow}}>
             <div style={{fontSize:15,fontWeight:700,color:C.dark,marginBottom:12}}>Top unpaid accounts</div>
@@ -293,7 +370,7 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
             topAccounts.map(([name,data],i)=>(
               <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<topAccounts.length-1?`1px solid ${C.border}`:"none"}}>
                 <div><div style={{fontSize:14,fontWeight:600,color:C.dark}}>{name}</div><div style={{fontSize:11,color:C.muted}}>{data.count} unpaid</div></div>
-                <div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:600,color:C.danger}}>{formatMoney(data.total)}</div><div style={{fontSize:11,color:C.danger}}>{daysSince(data.oldest)}d oldest</div></div>
+                <div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:600,color:C.danger}}>{formatMoney(data.total)}</div><div style={{fontSize:11,color:C.danger}}>{daysSince(data.oldest)}d</div></div>
               </div>
             ))}
           </div>
@@ -308,7 +385,6 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
             <div style={{fontSize:12,color:C.muted,marginTop:8,paddingTop:10,borderTop:`1px solid ${C.border}`}}>Target: collect within 30 days</div>
           </div>
         </div>
-
         <div style={{background:C.white,borderRadius:10,padding:"16px 20px",boxShadow:C.cardShadow}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
             <div style={{fontSize:15,fontWeight:700,color:C.dark}}>Jobs</div>
@@ -335,7 +411,7 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
                     <td style={{padding:"10px 4px",color:C.muted,fontSize:12,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{[j.pickup,j.dropoff].filter(Boolean).join(" \u2192 ")||"\u2014"}</td>
                     <td style={{padding:"10px 4px",textAlign:"right",fontWeight:600,whiteSpace:"nowrap"}}>{j.price&&!isNaN(j.price)?formatMoney(j.price):<span style={{color:C.warning}}>{"\u2014"}</span>}</td>
                     <td style={{padding:"10px 4px",textAlign:"center",whiteSpace:"nowrap"}}><StatusBadge status={j.status} price={j.price} /></td>
-                    <td style={{padding:"10px 4px",textAlign:"center",whiteSpace:"nowrap"}}><span style={{color:"#5588cc",fontSize:12,fontWeight:600}}>Edit →</span></td>
+                    <td style={{padding:"10px 4px",textAlign:"center",whiteSpace:"nowrap"}}><span style={{color:"#5588cc",fontSize:12,fontWeight:600}}>Edit</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -354,16 +430,9 @@ export default function App() {
   const [authed, setAuthed] = useState(()=>localStorage.getItem("ut-auth")==="1");
   const [jobs, setJobs] = useState([]);
   const [view, setView] = useState("dashboard");
-
   useEffect(()=>{ if(authed) setJobs(loadJobs()); },[authed]);
-
-  const addJob = useCallback((job)=>{
-    setJobs(prev=>{const next=[...prev,job];saveJobs(next);return next;});
-    setView("dashboard");
-  },[]);
-
+  const addJob = useCallback((job)=>{setJobs(prev=>{const next=[...prev,job];saveJobs(next);return next;});setView("dashboard");},[]);
   const handleLogout = ()=>{ localStorage.removeItem("ut-auth"); setAuthed(false); };
-
   if (!authed) return <PasswordGate onAuth={()=>setAuthed(true)} />;
   if (view==="capture") return <CaptureForm onSubmit={addJob} onCancel={()=>setView("dashboard")} />;
   return <Dashboard jobs={jobs} setJobs={setJobs} onNewJob={()=>setView("capture")} onLogout={handleLogout} />;
