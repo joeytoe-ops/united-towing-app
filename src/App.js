@@ -22,6 +22,8 @@ function daysSince(d) { return Math.floor((Date.now()-new Date(d).getTime())/864
 
 const emptyJob = () => ({
   id:generateId(), createdAt:new Date().toISOString(),
+  jobDate:new Date().toISOString().split("T")[0],
+  jobTime:new Date().toTimeString().slice(0,5),
   vehicle:{color:"",make:"",model:"",year:"",vin:"",plate:""},
   customer:{name:"",phone:"",isPartner:false},
   pickup:"", dropoff:"", serviceType:"Tow", price:"", paymentType:"Cash",
@@ -37,14 +39,15 @@ function saveJobs(jobs) { localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs)
 
 async function syncToSheets(job) {
   try {
-    const dt = new Date(job.createdAt);
-    await fetch(SHEETS_URL, {
+    const dateStr = job.jobDate || new Date().toISOString().split("T")[0];
+    const timeStr = job.jobTime || new Date().toTimeString().slice(0,5);
+    const resp = await fetch(SHEETS_URL, {
       method:"POST", mode:"no-cors",
-      headers:{"Content-Type":"application/json"},
+      headers:{"Content-Type":"text/plain"},
       body: JSON.stringify({
         id: job.id,
-        date: `${dt.getMonth()+1}/${dt.getDate()}/${dt.getFullYear()}`,
-        time: dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}),
+        date: dateStr,
+        time: timeStr,
         vehicleColor: job.vehicle.color,
         vehicleMake: job.vehicle.make,
         vehicleModel: job.vehicle.model,
@@ -64,7 +67,8 @@ async function syncToSheets(job) {
         registrationPhoto: job.registrationPhoto ? "Yes" : ""
       })
     });
-  } catch(err) { console.error("Sheets sync error:", err); }
+    return true;
+  } catch(err) { console.error("Sheets sync error:", err); return false; }
 }
 
 const C = {
@@ -163,6 +167,12 @@ function CaptureForm({ onSubmit, onCancel }) {
         <div style={{fontSize:12,color:"#ccc",marginTop:2}}>Quick job capture</div>
       </div>
       <div style={{padding:"16px 20px",maxWidth:420,margin:"0 auto"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          <div><label style={labelStyle}>Date</label>
+          <input type="date" value={job.jobDate||new Date().toISOString().split("T")[0]} onChange={e=>update("jobDate",e.target.value)} style={inputStyle} /></div>
+          <div><label style={labelStyle}>Time</label>
+          <input type="time" value={job.jobTime||new Date().toTimeString().slice(0,5)} onChange={e=>update("jobTime",e.target.value)} style={inputStyle} /></div>
+        </div>
         <div style={{marginBottom:14}}>
           <label style={labelStyle}>Customer / business</label>
           {!customCustomer ? (
