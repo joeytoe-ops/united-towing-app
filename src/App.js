@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
 const APP_PIN = "united149";
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbxn1SFWfILSu-JGrAd9pYAuEgS6HG3rPpMlSS8s-ExPH2BnJTkJKTX42-yNo57B-G7RAw/exec";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbzP1CcnlBSOlCDotGeVgsJlGyrI_710nUWkiqnBu7dNWkCnxprBdFYQqaZjQxV66EgN_A/exec";
 
 const PARTNERS = [
   "JC Auto","Gabe Citgo","Karls Auto Body","Tasca Ford","Hartsdale Mobil",
