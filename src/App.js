@@ -60,7 +60,9 @@ async function syncToSheets(job) {
         price: job.price || "",
         payment: job.paymentType || "",
         status: job.status || "",
-        notes: job.notes || ""
+        notes: job.notes || "",
+        vehiclePhoto: job.vehiclePhoto || "",
+        regPhoto: job.registrationPhoto || ""
       })
     });
     const data = await response.json();
