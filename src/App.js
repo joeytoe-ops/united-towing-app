@@ -66,15 +66,26 @@ const totals = (svc, tolls, pay) => {
   return { sub, tax, cc, total: Math.round((sub+tax+cc)*100)/100, svcSum };
 };
 
-/* Returns array of missing field labels for a job */
+/* Returns array of missing field labels for a job.
+   Paid jobs with receipt = closed, no flags.
+   Paid jobs without receipt = just "Receipt".
+   Everything else = check all fields. */
 const getMissing = (j) => {
+  const isPaid = j.status === ST.PAID;
+  const hasReceipt = !j.receiptMissing && isPaid;
+  // Fully closed job — paid and has receipt
+  if (isPaid && hasReceipt) return [];
+  // Paid but missing receipt only
+  if (isPaid && j.receiptMissing) return ["Receipt"];
+  // Paid with price and no receiptMissing flag — assume closed
+  if (isPaid && j.price && !isNaN(j.price)) return [];
+  // Not paid — check what's actually missing
   const m = [];
   if (!j.price || isNaN(j.price) || parseFloat(j.price) === 0) m.push("Price");
   if (!j.customer?.name) m.push("Customer");
   if (!j.pickup) m.push("Pickup");
   if (!j.dropoff) m.push("Dropoff");
   if (!j.vehicle?.make && !j.vehicle?.model) m.push("Vehicle");
-  if (!j.customer?.phone) m.push("Phone");
   return m;
 };
 
@@ -417,7 +428,10 @@ function EditPanel({job,onSave,onClose}){
 function MissingPills({job}){
   const m=getMissing(job);
   if(m.length===0)return null;
-  return(<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:3}}>{m.map(f=><span key={f} style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:600,background:"#fef3c7",color:"#92400e",whiteSpace:"nowrap"}}>No {f.toLowerCase()}</span>)}</div>);
+  return(<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:3}}>{m.map(f=>{
+    const isReceipt=f==="Receipt";
+    return <span key={f} style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:600,background:isReceipt?"#eff6ff":"#fef3c7",color:isReceipt?"#1e40af":"#92400e",whiteSpace:"nowrap"}}>No {f.toLowerCase()}</span>;
+  })}</div>);
 }
 
 function Dashboard({jobs,setJobs,onNew,onOut,loading,refresh}){
@@ -438,7 +452,7 @@ function Dashboard({jobs,setJobs,onNew,onOut,loading,refresh}){
   const oneOff=unpaid.filter(j=>!j.customer.name);const oneOffAmt=oneOff.reduce((a,j)=>a+(parseFloat(j.price)||0),0);
 
   /* Count what's missing across all incomplete jobs */
-  const missingBreakdown={Price:0,Customer:0,Pickup:0,Dropoff:0,Vehicle:0,Phone:0};
+  const missingBreakdown={Price:0,Customer:0,Pickup:0,Dropoff:0,Vehicle:0,Receipt:0};
   needsInfo.forEach(j=>getMissing(j).forEach(f=>{if(missingBreakdown[f]!==undefined)missingBreakdown[f]++}));
 
   let list=pool;if(filt==="action")list=pool.filter(j=>j.status!==ST.PAID);else if(filt==="unpaid")list=unpaid;else if(filt==="missing")list=missing;else if(filt==="needs_info")list=needsInfo;else if(filt==="paid")list=paid;
