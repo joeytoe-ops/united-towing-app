@@ -15,9 +15,9 @@ const STATUSES = { PAID:"paid", UNPAID:"unpaid", MISSING:"missing" };
 const TAX_RATE = 0.08375;
 
 function generateId() { return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
-function formatDate(d) { if(!d) return "\u2014"; const dt=new Date(d); return `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)}`; }
+function formatDate(d) { if(!d) return "\u2014"; const dt=new Date(d); return isNaN(dt)? "\u2014" : `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)}`; }
 function formatMoney(n) { if(n==null||isNaN(n)) return "\u2014"; return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function daysSince(d) { return Math.floor((Date.now()-new Date(d).getTime())/86400000); }
+function daysSince(d) { if(!d) return 0; return Math.floor((Date.now()-new Date(d).getTime())/86400000); }
 
 const emptyJob = () => ({
   id:generateId(), createdAt:new Date().toISOString(),
@@ -32,42 +32,98 @@ const emptyJob = () => ({
   invoiceDetails:{subtotal:"",tax:"",total:"",tolls:"",ccFee:""}
 });
 
-const STORAGE_KEY = "ut-jobs-v2";
-function loadJobs() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]"); } catch { return []; } }
-function saveJobs(jobs) { localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs)); }
+// --- SHEETS SYNC LAYER ---
+// This is the single source of truth. localStorage is just offline cache.
 
-async function syncToSheets(job) {
+const CACHE_KEY = "ut-jobs-v2";
+function cacheJobs(jobs) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(jobs)); } catch {} }
+function loadCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY)||"[]"); } catch { return []; } }
+
+// Convert a sheet row array into our job object
+function rowToJob(row) {
+  // Columns: 0=id, 1=date, 2=time, 3=color, 4=make, 5=model, 6=year, 7=vin, 8=plate,
+  //          9=customer, 10=phone, 11=pickup, 12=dropoff, 13=service, 14=price,
+  //          15=payment, 16=status, 17=notes
+  const id = row[0] || generateId();
+  const jobDate = row[1] || "";
+  const status = (row[16]||"").toLowerCase();
+  return {
+    id,
+    createdAt: jobDate ? new Date(jobDate + "T12:00:00").toISOString() : new Date().toISOString(),
+    jobDate,
+    jobTime: row[2] || "",
+    vehicle: { color: row[3]||"", make: row[4]||"", model: row[5]||"", year: row[6]||"", vin: row[7]||"", plate: row[8]||"" },
+    customer: { name: row[9]||"", phone: row[10]||"", isPartner: PARTNERS.includes(row[9]||"") },
+    pickup: row[11]||"",
+    dropoff: row[12]||"",
+    serviceType: row[13]||"Tow",
+    price: row[14]||"",
+    paymentType: row[15]||"Cash",
+    status: status === "paid" ? STATUSES.PAID : ((!row[14] || row[14]==="") ? STATUSES.MISSING : STATUSES.UNPAID),
+    notes: row[17]||"",
+    vehiclePhoto: null,
+    registrationPhoto: null,
+    receiptGenerated: false,
+    paidDate: status === "paid" ? (jobDate ? new Date(jobDate+"T12:00:00").toISOString() : null) : null,
+    invoiceDetails: { subtotal:"", tax:"", total:"", tolls:"", ccFee:"" }
+  };
+}
+
+// Convert job object to flat payload for sheets
+function jobToPayload(job, action) {
+  return {
+    action,
+    id: job.id,
+    date: job.jobDate || new Date().toISOString().split("T")[0],
+    time: job.jobTime || new Date().toTimeString().slice(0,5),
+    color: job.vehicle?.color || "",
+    make: job.vehicle?.make || "",
+    model: job.vehicle?.model || "",
+    year: job.vehicle?.year || "",
+    vin: job.vehicle?.vin || "",
+    plate: job.vehicle?.plate || "",
+    customer: job.customer?.name || "",
+    phone: job.customer?.phone || "",
+    pickup: job.pickup || "",
+    dropoff: job.dropoff || "",
+    service: job.serviceType || "",
+    price: job.price || "",
+    payment: job.paymentType || "",
+    status: job.status || "",
+    notes: job.notes || ""
+  };
+}
+
+async function fetchJobsFromSheets() {
+  try {
+    const response = await fetch("/api/sync");
+    const data = await response.json();
+    if (data.jobs && Array.isArray(data.jobs)) {
+      return data.jobs.map(rowToJob);
+    }
+    // If raw text came back, sheet might not have list support yet
+    console.warn("Sheets returned unexpected format:", data);
+    return null;
+  } catch (err) {
+    console.error("Failed to fetch from sheets:", err);
+    return null;
+  }
+}
+
+async function syncToSheets(job, action = "add") {
   try {
     const response = await fetch("/api/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: job.id,
-        date: job.jobDate || new Date().toISOString().split("T")[0],
-        time: job.jobTime || new Date().toTimeString().slice(0,5),
-        color: job.vehicle?.color || "",
-        make: job.vehicle?.make || "",
-        model: job.vehicle?.model || "",
-        year: job.vehicle?.year || "",
-        vin: job.vehicle?.vin || "",
-        plate: job.vehicle?.plate || "",
-        customer: job.customer?.name || "",
-        phone: job.customer?.phone || "",
-        pickup: job.pickup || "",
-        dropoff: job.dropoff || "",
-        service: job.serviceType || "",
-        price: job.price || "",
-        payment: job.paymentType || "",
-        status: job.status || "",
-        notes: job.notes || ""
-      })
+      body: JSON.stringify(jobToPayload(job, action))
     });
     const data = await response.json();
-    console.log("Sheets sync:", data);
+    console.log("Sheets sync:", action, data);
     return true;
   } catch(err) { console.error("Sheets sync error:", err); return false; }
 }
 
+// --- PDF GENERATION ---
 async function generateInvoicePDF(job) {
   if (!window.jspdf) {
     await new Promise((resolve, reject) => {
@@ -232,6 +288,7 @@ async function generateInvoicePDF(job) {
   doc.save("UnitedTowing_"+cn+"_"+(job.jobDate||"").replace(/-/g,"")+".pdf");
 }
 
+// --- STYLES ---
 const C = {
   bg:"#f7f6f3",white:"#ffffff",dark:"#1a1a2e",accent:"#2d6a4f",
   danger:"#c1292e",warning:"#e8871e",success:"#2d6a4f",muted:"#8a8a8a",
@@ -240,6 +297,7 @@ const C = {
 };
 const baseBtn = {padding:"10px 20px",borderRadius:8,border:"none",cursor:"pointer",fontSize:14,fontWeight:600,transition:"all 0.15s"};
 
+// --- COMPONENTS ---
 function PhotoCapture({ label, icon, value, onChange }) {
   const inputRef = useRef(null);
   const [preview, setPreview] = useState(value);
@@ -278,14 +336,14 @@ function PasswordGate({ onAuth }) {
   };
   return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.dark}}>
-      <form onSubmit={handleSubmit} style={{textAlign:"center",padding:40}}>
+      <div onKeyDown={e=>{if(e.key==="Enter")handleSubmit(e)}} style={{textAlign:"center",padding:40}}>
         <div style={{fontSize:24,fontWeight:700,color:"#fff",marginBottom:4}}>United Towing</div>
         <div style={{fontSize:13,color:"#aaa",marginBottom:24}}>Enter access code</div>
         <input value={pin} onChange={e=>{setPin(e.target.value);setError(false);}} type="password" placeholder="Access code" autoFocus
           style={{padding:"12px 16px",fontSize:16,borderRadius:8,border:error?"2px solid #c1292e":"2px solid #444",background:"#2a2a3e",color:"#fff",width:220,textAlign:"center",outline:"none",display:"block",margin:"0 auto 12px"}} />
-        <button type="submit" style={{...baseBtn,background:"#fff",color:C.dark,width:220}}>Enter</button>
+        <button onClick={handleSubmit} style={{...baseBtn,background:"#fff",color:C.dark,width:220}}>Enter</button>
         {error && <div style={{color:"#c1292e",fontSize:13,marginTop:10}}>Wrong code</div>}
-      </form>
+      </div>
     </div>
   );
 }
@@ -304,7 +362,7 @@ function CaptureForm({ onSubmit, onCancel }) {
     if(!final.price||isNaN(final.price)) final.status=STATUSES.MISSING;
     if(final.status===STATUSES.PAID) final.paidDate=new Date().toISOString();
     setSyncing(true);
-    await syncToSheets(final);
+    await syncToSheets(final, "add");
     onSubmit(final);
     setSyncing(false);
     setSubmitted(true);
@@ -414,9 +472,19 @@ function CaptureForm({ onSubmit, onCancel }) {
   );
 }
 
+function StatusBadge({status,price}) {
+  const noPrice=!price||isNaN(price);
+  const s={padding:"3px 8px",borderRadius:12,fontSize:11,fontWeight:600,whiteSpace:"nowrap",display:"inline-block"};
+  if(status===STATUSES.PAID) return <span style={{...s,background:C.lightGreen,color:C.success}}>Paid</span>;
+  if(noPrice) return <span style={{...s,background:C.lightYellow,color:C.warning}}>No price</span>;
+  return <span style={{...s,background:C.lightRed,color:C.danger}}>Unpaid</span>;
+}
+
 function InvoicePanel({ job, onSave, onClose }) {
   const [j, setJ] = useState(JSON.parse(JSON.stringify(job)));
   const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
   const update = (path,val) => {
     setJ(prev => { const c=JSON.parse(JSON.stringify(prev)); const k=path.split("."); let r=c; for(let i=0;i<k.length-1;i++) r=r[k[i]]; r[k[k.length-1]]=val; return c; });
   };
@@ -424,28 +492,53 @@ function InvoicePanel({ job, onSave, onClose }) {
   const subtotal=price+tolls, tax=Math.round(subtotal*TAX_RATE*100)/100;
   const ccFee=j.paymentType==="Credit Card"?Math.round(subtotal*0.045*100)/100:0;
   const total=Math.round((subtotal+tax+ccFee)*100)/100;
+
   const markPaid=()=>{update("status",STATUSES.PAID);update("paidDate",new Date().toISOString());};
+  const markUnpaid=()=>{update("status",STATUSES.UNPAID);update("paidDate",null);};
+
+  const handleSave = async () => {
+    setSaving(true);
+    const saved={...j,invoiceDetails:{...j.invoiceDetails,subtotal,tax,total,ccFee},receiptGenerated:true};
+    // Send update to sheets (overwrites the row with this ID)
+    const ok = await syncToSheets(saved, "update");
+    onSave(saved);
+    setSaveMsg(ok ? "Saved & synced" : "Saved locally (sync failed)");
+    setSaving(false);
+    setTimeout(()=>setSaveMsg(""),2000);
+  };
+
   const handleGeneratePDF = async () => {
     setGenerating(true);
     try { await generateInvoicePDF({...j, invoiceDetails:{...j.invoiceDetails, subtotal, tax, total, ccFee, tolls}}); }
     catch(err) { console.error("PDF error:", err); alert("Error generating PDF"); }
     setGenerating(false);
   };
+
   const labelStyle={fontSize:11,fontWeight:600,color:C.muted,display:"block",marginBottom:3,textTransform:"uppercase",letterSpacing:0.5};
   const inputStyle={width:"100%",padding:"9px 10px",fontSize:14,borderRadius:6,border:`1.5px solid ${C.border}`,background:C.white,boxSizing:"border-box",fontFamily:"inherit"};
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:C.white,borderRadius:12,width:"100%",maxWidth:600,maxHeight:"90vh",overflow:"auto",padding:24}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.dark}}>Complete invoice</h3>
+          <h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.dark}}>Edit job / invoice</h3>
           <button onClick={onClose} style={{...baseBtn,padding:"6px 12px",background:C.border,color:C.dark,fontSize:12}}>Close</button>
         </div>
+
+        {/* Date & Time - editable */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          <div><label style={labelStyle}>Date</label>
+          <input type="date" value={j.jobDate} onChange={e=>update("jobDate",e.target.value)} style={inputStyle} /></div>
+          <div><label style={labelStyle}>Time</label>
+          <input type="time" value={j.jobTime} onChange={e=>update("jobTime",e.target.value)} style={inputStyle} /></div>
+        </div>
+
         {(j.vehiclePhoto||j.registrationPhoto)&&(
           <div style={{display:"grid",gridTemplateColumns:j.vehiclePhoto&&j.registrationPhoto?"1fr 1fr":"1fr",gap:8,marginBottom:14}}>
             {j.vehiclePhoto&&<div><div style={{fontSize:11,fontWeight:600,color:C.muted,marginBottom:4,textTransform:"uppercase"}}>Vehicle photo</div><img src={j.vehiclePhoto} alt="Vehicle" style={{width:"100%",height:120,objectFit:"cover",borderRadius:6}} /></div>}
             {j.registrationPhoto&&<div><div style={{fontSize:11,fontWeight:600,color:C.muted,marginBottom:4,textTransform:"uppercase"}}>Registration</div><img src={j.registrationPhoto} alt="Registration" style={{width:"100%",height:120,objectFit:"cover",borderRadius:6}} /></div>}
           </div>
         )}
+
         <div style={{background:C.bg,borderRadius:8,padding:14,marginBottom:14}}>
           <div style={{fontSize:13,fontWeight:700,color:C.dark,marginBottom:10}}>Vehicle details</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
@@ -459,6 +552,7 @@ function InvoicePanel({ job, onSave, onClose }) {
             <div><label style={labelStyle}>Plate</label><input value={j.vehicle.plate} onChange={e=>update("vehicle.plate",e.target.value)} style={inputStyle} /></div>
           </div>
         </div>
+
         <div style={{background:C.bg,borderRadius:8,padding:14,marginBottom:14}}>
           <div style={{fontSize:13,fontWeight:700,color:C.dark,marginBottom:10}}>Customer</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -466,10 +560,21 @@ function InvoicePanel({ job, onSave, onClose }) {
             <div><label style={labelStyle}>Phone</label><input value={j.customer.phone} onChange={e=>update("customer.phone",e.target.value)} placeholder="347-722-0502" style={inputStyle} /></div>
           </div>
         </div>
+
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
           <div><label style={labelStyle}>Pickup</label><input value={j.pickup} onChange={e=>update("pickup",e.target.value)} style={inputStyle} /></div>
           <div><label style={labelStyle}>Dropoff</label><input value={j.dropoff} onChange={e=>update("dropoff",e.target.value)} style={inputStyle} /></div>
         </div>
+
+        <div style={{marginBottom:14}}>
+          <label style={labelStyle}>Service type</label>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {SERVICE_TYPES.map(s=>(
+              <span key={s} onClick={()=>update("serviceType",s)} style={{padding:"6px 12px",borderRadius:16,fontSize:12,fontWeight:600,cursor:"pointer",background:j.serviceType===s?C.dark:C.white,color:j.serviceType===s?"#fff":C.muted,border:`1.5px solid ${j.serviceType===s?C.dark:C.border}`}}>{s}</span>
+            ))}
+          </div>
+        </div>
+
         <div style={{background:C.bg,borderRadius:8,padding:14,marginBottom:14}}>
           <div style={{fontSize:13,fontWeight:700,color:C.dark,marginBottom:10}}>Pricing</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
@@ -484,30 +589,46 @@ function InvoicePanel({ job, onSave, onClose }) {
             <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:16,marginTop:6}}><span>Total due</span><span style={{color:C.accent}}>{formatMoney(total)}</span></div>
           </div>
         </div>
+
         <div style={{marginBottom:14}}><label style={labelStyle}>Notes</label><textarea value={j.notes} onChange={e=>update("notes",e.target.value)} rows={2} style={{...inputStyle,resize:"vertical"}} /></div>
-        <div style={{display:"flex",gap:8,marginBottom:8}}>
-          {j.status!==STATUSES.PAID&&<button onClick={markPaid} style={{...baseBtn,flex:1,background:C.success,color:"#fff"}}>Mark as paid</button>}
-          <button onClick={()=>{const saved={...j,invoiceDetails:{...j.invoiceDetails,subtotal,tax,total,ccFee},receiptGenerated:true};onSave(saved);}} style={{...baseBtn,flex:1,background:C.dark,color:"#fff"}}>Save invoice</button>
+
+        {/* Payment status toggle */}
+        <div style={{marginBottom:14}}>
+          <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:`1.5px solid ${C.border}`}}>
+            <div onClick={markPaid}
+              style={{flex:1,padding:"11px 0",textAlign:"center",fontSize:14,fontWeight:600,cursor:"pointer",
+                background:j.status===STATUSES.PAID?C.success:C.white,color:j.status===STATUSES.PAID?"#fff":C.muted,transition:"all 0.15s"}}>
+              Paid
+            </div>
+            <div onClick={markUnpaid}
+              style={{flex:1,padding:"11px 0",textAlign:"center",fontSize:14,fontWeight:600,cursor:"pointer",
+                background:j.status===STATUSES.UNPAID?C.danger:C.white,color:j.status===STATUSES.UNPAID?"#fff":C.muted,
+                borderLeft:`1px solid ${C.border}`,transition:"all 0.15s"}}>
+              Unpaid
+            </div>
+          </div>
         </div>
+
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
+          <button onClick={handleSave} disabled={saving}
+            style={{...baseBtn,flex:1,background:saving?"#666":C.dark,color:"#fff"}}>
+            {saving ? "Saving..." : "Save changes"}
+          </button>
+        </div>
+        {saveMsg && <div style={{textAlign:"center",fontSize:13,color:C.success,fontWeight:600,marginBottom:8}}>{saveMsg}</div>}
+
         <button onClick={handleGeneratePDF} disabled={generating}
           style={{...baseBtn,width:"100%",padding:12,fontSize:14,background:generating?"#666":"#b35900",color:"#fff",borderRadius:8}}>
           {generating ? "Generating..." : "Generate Invoice PDF"}
         </button>
-        {j.status===STATUSES.PAID&&<div style={{textAlign:"center",marginTop:10,fontSize:13,color:C.success,fontWeight:600}}>Paid on {formatDate(j.paidDate)}</div>}
+
+        {j.status===STATUSES.PAID&&j.paidDate&&<div style={{textAlign:"center",marginTop:10,fontSize:13,color:C.success,fontWeight:600}}>Paid on {formatDate(j.paidDate)}</div>}
       </div>
     </div>
   );
 }
 
-function StatusBadge({status,price}) {
-  const noPrice=!price||isNaN(price);
-  const s={padding:"3px 8px",borderRadius:12,fontSize:11,fontWeight:600,whiteSpace:"nowrap",display:"inline-block"};
-  if(status===STATUSES.PAID) return <span style={{...s,background:C.lightGreen,color:C.success}}>Paid</span>;
-  if(noPrice) return <span style={{...s,background:C.lightYellow,color:C.warning}}>No price</span>;
-  return <span style={{...s,background:C.lightRed,color:C.danger}}>Unpaid</span>;
-}
-
-function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
+function Dashboard({ jobs, setJobs, onNewJob, onLogout, loading, onRefresh }) {
   const [editing, setEditing] = useState(null);
   const [filter, setFilter] = useState("action");
   const [search, setSearch] = useState("");
@@ -528,13 +649,23 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
   else if(filter==="paid") filtered=paidJobs;
   if(search){const s=search.toLowerCase();filtered=filtered.filter(j=>(j.customer.name||"").toLowerCase().includes(s)||(j.vehicle.make||"").toLowerCase().includes(s)||(j.vehicle.model||"").toLowerCase().includes(s)||(j.vehicle.color||"").toLowerCase().includes(s)||(j.pickup||"").toLowerCase().includes(s)||(j.dropoff||"").toLowerCase().includes(s));}
   filtered=[...filtered].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  const handleSave=(updated)=>{setJobs(prev=>{const next=prev.map(j=>j.id===updated.id?updated:j);saveJobs(next);return next;});setEditing(null);syncToSheets(updated);};
+
+  const handleSave = async (updated) => {
+    setJobs(prev => {
+      const next = prev.map(j => j.id === updated.id ? updated : j);
+      cacheJobs(next);
+      return next;
+    });
+    setEditing(null);
+  };
+
   const maxAging=Math.max(...Object.values(aging),1);
   return (
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
       <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,padding:"14px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-        <div><div style={{fontSize:18,fontWeight:700,color:C.dark}}>United Towing &amp; Transport</div><div style={{fontSize:12,color:C.muted}}>Invoicing dashboard</div></div>
+        <div><div style={{fontSize:18,fontWeight:700,color:C.dark}}>United Towing &amp; Transport</div><div style={{fontSize:12,color:C.muted}}>Invoicing dashboard {loading && " \u2014 loading..."}</div></div>
         <div style={{display:"flex",gap:8}}>
+          <button onClick={onRefresh} style={{...baseBtn,background:C.bg,color:C.muted,fontSize:12,padding:"8px 12px"}} title="Refresh from Google Sheets">{loading ? "\u23F3" : "\u21BB"}</button>
           <button onClick={onNewJob} style={{...baseBtn,background:C.dark,color:"#fff",fontSize:13}}>+ Log new job</button>
           <button onClick={onLogout} style={{...baseBtn,background:C.border,color:C.muted,fontSize:12}}>Logout</button>
         </div>
@@ -587,7 +718,7 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
                   <div style={{flex:1}}>
                     <div style={{fontSize:14,fontWeight:600,color:C.dark}}>{[j.vehicle.color,j.vehicle.make,j.vehicle.model].filter(Boolean).join(" ")||"No vehicle info"}</div>
-                    <div style={{fontSize:13,color:C.muted,marginTop:2}}>{j.customer.name||"No customer"} &middot; {formatDate(j.createdAt)}</div>
+                    <div style={{fontSize:13,color:C.muted,marginTop:2}}>{j.customer.name||"No customer"} &middot; {formatDate(j.jobDate||j.createdAt)}</div>
                   </div>
                   <div style={{textAlign:"right",marginLeft:12}}>
                     <div style={{fontSize:15,fontWeight:700}}>{j.price&&!isNaN(j.price)?formatMoney(j.price):<span style={{color:C.warning,fontSize:13}}>No price</span>}</div>
@@ -611,10 +742,39 @@ export default function App() {
   const [authed, setAuthed] = useState(()=>localStorage.getItem("ut-auth")==="1");
   const [jobs, setJobs] = useState([]);
   const [view, setView] = useState("dashboard");
-  useEffect(()=>{ if(authed) setJobs(loadJobs()); },[authed]);
-  const addJob = useCallback((job)=>{setJobs(prev=>{const next=[...prev,job];saveJobs(next);return next;});setView("dashboard");},[]);
-  const handleLogout = ()=>{ localStorage.removeItem("ut-auth"); setAuthed(false); };
+  const [loading, setLoading] = useState(false);
+
+  // Load jobs: try sheets first, fall back to cache
+  const loadFromSheets = useCallback(async () => {
+    setLoading(true);
+    const sheetJobs = await fetchJobsFromSheets();
+    if (sheetJobs && sheetJobs.length > 0) {
+      setJobs(sheetJobs);
+      cacheJobs(sheetJobs);
+    } else {
+      // Fall back to local cache
+      const cached = loadCache();
+      if (cached.length > 0) setJobs(cached);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (authed) loadFromSheets();
+  }, [authed, loadFromSheets]);
+
+  const addJob = useCallback((job) => {
+    setJobs(prev => {
+      const next = [...prev, job];
+      cacheJobs(next);
+      return next;
+    });
+    setView("dashboard");
+  }, []);
+
+  const handleLogout = () => { localStorage.removeItem("ut-auth"); setAuthed(false); };
+
   if (!authed) return <PasswordGate onAuth={()=>setAuthed(true)} />;
   if (view==="capture") return <CaptureForm onSubmit={addJob} onCancel={()=>setView("dashboard")} />;
-  return <Dashboard jobs={jobs} setJobs={setJobs} onNewJob={()=>setView("capture")} onLogout={handleLogout} />;
+  return <Dashboard jobs={jobs} setJobs={setJobs} onNewJob={()=>setView("capture")} onLogout={handleLogout} loading={loading} onRefresh={loadFromSheets} />;
 }
