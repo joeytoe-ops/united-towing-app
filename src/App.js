@@ -86,63 +86,7 @@ const CK = "ut-v5";
 const cacheJobs = j => { try { localStorage.setItem(CK, JSON.stringify(j)); } catch {} };
 const loadCached = () => { try { return JSON.parse(localStorage.getItem(CK) || "[]"); } catch { return []; } };
 
-function parseLegacy(r) {
-  const name = String(r.jobName || "").trim();
-  const num = String(r.jobNumber || "");
-  if (!name || isNaN(Number(num))) return null;
-
-  let jobDate = "";
-  if (r.date) try { jobDate = new Date(r.date).toISOString().split("T")[0]; } catch {}
-
-  const payRaw = String(r.paymentType || "").trim();
-  const rcptRaw = String(r.receiptStatus || "").trim();
-  const payUp = payRaw.toUpperCase();
-  const rcptLow = rcptRaw.toLowerCase();
-
-  let price = "";
-  if (r.payout != null && r.payout !== "" && r.payout !== "-") {
-    const p = parseFloat(r.payout);
-    if (!isNaN(p) && p > 0) price = p;
-  }
-
-  let status = ST.MISSING;
-  let receiptMissing = false;
-  const needsPay = payUp.includes("NEEDS TO BE PAID");
-  const hasPay = payUp.includes("CASH") || payUp.includes("ZELLE") || payUp.includes("CHECK") || payUp.includes("CREDIT");
-  const hasCheck = rcptRaw.includes("\u2705") || rcptRaw.includes("\u2611");
-  const hasReceipt = rcptLow.includes("receipt in tow");
-
-  if (!price && price !== 0) status = ST.MISSING;
-  else if (needsPay) status = ST.UNPAID;
-  else if (hasCheck || hasReceipt || hasPay) status = ST.PAID;
-  else status = ST.UNPAID;
-
-  if (rcptLow.includes("missing receipt")) receiptMissing = true;
-
-  let payNorm = "Cash";
-  if (payUp.includes("ZELLE")) payNorm = "Zelle";
-  else if (payUp.includes("CHECK")) payNorm = "Check";
-  else if (payUp.includes("CREDIT")) payNorm = "Credit Card";
-  else if (payUp.includes("INSURANCE") || payUp.includes("PENDING")) payNorm = "Pending Insurance";
-  else if (needsPay) payNorm = "Invoice Later";
-
-  let cust = "";
-  const combo = (name + " " + String(r.notes || "")).toLowerCase();
-  for (const p of PARTNERS) if (combo.includes(p.toLowerCase())) { cust = p; break; }
-
-  return {
-    id: "L" + num, jobDate, jobTime: "",
-    vehicle: { color:"", make:"", model:"", year:"", vin:"", plate:"" },
-    customer: { name: cust, phone: "" },
-    owner: { name:"", homePhone:"", workPhone:"" },
-    pickup:"", pickupCity:"", dropoff:"", dropoffCity:"",
-    services: price ? { towing: price } : {}, price, paymentType: payNorm, tolls:"",
-    poNumber:"", raNumber:"", status, notes: String(r.notes || ""),
-    vehiclePhoto: null, registrationPhoto: null,
-    source: "legacy", title: name, legacyNum: num, receiptMissing,
-    legacyRaw: { jobName: name, receiptStatus: rcptRaw, paymentType: payRaw, payout: r.payout }
-  };
-}
+// parseLegacy removed — all data now in App Jobs after migration
 
 function parseApp(row) {
   const id = row[0] || uid();
@@ -159,6 +103,7 @@ function parseApp(row) {
   let ext = {};
   try { if (String(row[17]).startsWith("{")) ext = JSON.parse(row[17]); } catch {}
   const st = (row[16] || "").toLowerCase();
+  const isLegacy = String(id).startsWith("L") || !!ext.legacyNum;
 
   return {
     id, jobDate: jd, jobTime: jt,
@@ -169,10 +114,12 @@ function parseApp(row) {
     dropoff: row[12]||"", dropoffCity: ext.dropoffCity||"",
     services: svc, price: row[14]||"", paymentType: row[15]||"Cash",
     tolls: ext.tolls||"", poNumber: ext.poNumber||"", raNumber: ext.raNumber||"",
-    status: st === "paid" ? ST.PAID : ((!row[14] || row[14] === "") ? ST.MISSING : ST.UNPAID),
+    status: st === "paid" ? ST.PAID : (st === "unpaid" ? ST.UNPAID : ((!row[14] || row[14] === "") ? ST.MISSING : ST.UNPAID)),
     notes: ext.notes != null ? ext.notes : (String(row[17]).startsWith("{") ? "" : (row[17] || "")),
     legacyNum: ext.legacyNum || "",
-    vehiclePhoto: null, registrationPhoto: null, source: "app",
+    receiptMissing: ext.receiptMissing || false,
+    vehiclePhoto: null, registrationPhoto: null,
+    source: isLegacy ? "migrated" : "app",
     title: [row[3], row[4], row[5]].filter(Boolean).join(" ") || (ext.legacyTitle || "")
   };
 }
@@ -203,12 +150,9 @@ async function fetchAll() {
   try {
     const r = await fetch("/api/sync");
     const d = await r.json();
-    const app = (d.appJobs || d.jobs || []).map(parseApp);
-    const leg = (d.legacyJobs || []).map(parseLegacy).filter(Boolean);
-    const linked = new Set();
-    app.forEach(j => { if (j.legacyNum) linked.add("L" + j.legacyNum); });
-    const filtered = leg.filter(j => !linked.has(j.id));
-    return [...filtered, ...app];
+    // Post-migration: everything is in App Jobs
+    const jobs = (d.jobs || d.appJobs || []).map(parseApp);
+    return jobs;
   } catch (e) { console.error(e); return null; }
 }
 
@@ -698,7 +642,7 @@ function Capture({ onSubmit, onCancel }) {
    EDIT PANEL (modal)
    ════════════════════════════════════════ */
 function EditPanel({ job, onSave, onClose }) {
-  const isLegacy = job.source === "legacy";
+  const isMigrated = job.source === "migrated";
   const [j, setJ] = useState(JSON.parse(JSON.stringify(job)));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -714,9 +658,9 @@ function EditPanel({ job, onSave, onClose }) {
 
   const save = async () => {
     setBusy(true);
-    const saved = { ...j, price: svcSum || j.price, source: "app" };
-    if (isLegacy) { saved.id = uid(); saved.legacyNum = job.legacyNum; }
-    await syncJob(saved, isLegacy ? "add" : "update");
+    const saved = { ...j, price: svcSum || j.price };
+    // All jobs update in place now (migrated or app)
+    await syncJob(saved, "update");
     onSave(saved);
     setMsg("Saved"); setBusy(false);
     setTimeout(() => setMsg(""), 2000);
@@ -736,11 +680,11 @@ function EditPanel({ job, onSave, onClose }) {
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
           <div>
             <div style={{ fontSize:18, fontWeight:700, color:T.dark }}>
-              {isLegacy ? `Job #${job.legacyNum}` : "Edit job"}
+              {isMigrated ? `Job #${job.legacyNum}` : "Edit job"}
             </div>
-            {isLegacy && (
+            {isMigrated && (
               <div style={{ fontSize:12, color:T.muted, marginTop:3 }}>
-                Saves a new copy in App Jobs — original untouched
+                Migrated from Overview — edits save directly
               </div>
             )}
           </div>
@@ -751,8 +695,8 @@ function EditPanel({ job, onSave, onClose }) {
           </button>
         </div>
 
-        {/* Legacy original info */}
-        {isLegacy && (
+        {/* Original info for migrated jobs */}
+        {isMigrated && job.title && (
           <div style={{ background:"#eff6ff", borderRadius:10, padding:14, marginBottom:16, fontSize:13, lineHeight:1.7 }}>
             <div style={{ fontWeight:700, marginBottom:4 }}>{job.title}</div>
             <div style={{ color:T.muted }}>
@@ -863,7 +807,7 @@ function EditPanel({ job, onSave, onClose }) {
         {/* Actions */}
         <button onClick={save} disabled={busy}
           style={{ ...btnPrimary, opacity: busy ? .7 : 1, marginBottom:8 }}>
-          {busy ? "Saving..." : (isLegacy ? "Save to App Jobs" : "Save changes")}
+          {busy ? "Saving..." : "Save changes"}
         </button>
         {msg && <div style={{ textAlign:"center", fontSize:13, color:T.accent, fontWeight:600, marginBottom:8 }}>{msg}</div>}
         <button onClick={pdf} disabled={pdfing}
@@ -888,7 +832,7 @@ function Dashboard({ jobs, setJobs, onNew, onOut, loading, refresh }) {
   // Filter by source
   let pool = jobs;
   if (src === "app") pool = jobs.filter(j => j.source === "app");
-  else if (src === "legacy") pool = jobs.filter(j => j.source === "legacy");
+  else if (src === "migrated") pool = jobs.filter(j => j.source === "migrated");
 
   // Compute stats
   const unpaid = pool.filter(j => j.status !== ST.PAID && j.price && !isNaN(j.price));
@@ -944,7 +888,7 @@ function Dashboard({ jobs, setJobs, onNew, onOut, loading, refresh }) {
   }
   list = [...list].sort((a,b) => (b.jobDate||"").localeCompare(a.jobDate||""));
 
-  const legacyN = jobs.filter(j => j.source === "legacy").length;
+  const legacyN = jobs.filter(j => j.source === "migrated").length;
   const appN = jobs.filter(j => j.source === "app").length;
 
   const handleSave = saved => {
@@ -987,7 +931,7 @@ function Dashboard({ jobs, setJobs, onNew, onOut, loading, refresh }) {
       <div style={{ padding:"16px 18px", maxWidth:960, margin:"0 auto" }}>
         {/* Source tabs */}
         <div style={{ display:"flex", gap:6, marginBottom:14 }}>
-          {[["all","All"],["legacy",`Legacy (${legacyN})`],["app",`App (${appN})`]].map(([k,label]) => (
+          {[["all","All"],["migrated",`Migrated (${legacyN})`],["app",`New (${appN})`]].map(([k,label]) => (
             <span key={k} onClick={() => { setSrc(k); setShow(50); }}
               style={{ padding:"6px 14px", borderRadius:20, fontSize:12, fontWeight:600, cursor:"pointer",
                 background: src === k ? T.dark : T.surface, color: src === k ? "#fff" : T.muted,
@@ -1101,9 +1045,9 @@ function Dashboard({ jobs, setJobs, onNew, onOut, loading, refresh }) {
                   <div style={{ fontSize:14, fontWeight:600, color:T.dark,
                     overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                     {title || "\u2014"}
-                    {j.source === "legacy" && (
+                    {j.source === "migrated" && (
                       <span style={{ padding:"1px 5px", borderRadius:4, fontSize:9, fontWeight:700,
-                        background:"#eff6ff", color:"#2563eb", marginLeft:6, verticalAlign:"middle" }}>L</span>
+                        background:"#eff6ff", color:"#2563eb", marginLeft:6, verticalAlign:"middle" }}>M</span>
                     )}
                     {j.receiptMissing && (
                       <span style={{ padding:"1px 5px", borderRadius:4, fontSize:9, fontWeight:700,
