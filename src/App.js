@@ -45,13 +45,22 @@ function rowToJob(row) {
   //          9=customer, 10=phone, 11=pickup, 12=dropoff, 13=service, 14=price,
   //          15=payment, 16=status, 17=notes
   const id = row[0] || generateId();
-  const jobDate = row[1] || "";
+  // Google Sheets returns dates as ISO strings like "2026-04-13T04:00:00.000Z"
+  const rawDate = row[1] || "";
+  const jobDate = rawDate ? new Date(rawDate).toISOString().split("T")[0] : "";
+  // Times come back as "1899-12-31T01:03:00.000Z" - extract just HH:MM
+  const rawTime = row[2] || "";
+  let jobTime = "";
+  if (rawTime) {
+    try { const td = new Date(rawTime); jobTime = td.getUTCHours().toString().padStart(2,"0") + ":" + td.getUTCMinutes().toString().padStart(2,"0"); }
+    catch { jobTime = String(rawTime).slice(0,5); }
+  }
   const status = (row[16]||"").toLowerCase();
   return {
     id,
     createdAt: jobDate ? new Date(jobDate + "T12:00:00").toISOString() : new Date().toISOString(),
     jobDate,
-    jobTime: row[2] || "",
+    jobTime,
     vehicle: { color: row[3]||"", make: row[4]||"", model: row[5]||"", year: row[6]||"", vin: row[7]||"", plate: row[8]||"" },
     customer: { name: row[9]||"", phone: row[10]||"", isPartner: PARTNERS.includes(row[9]||"") },
     pickup: row[11]||"",
