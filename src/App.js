@@ -150,11 +150,70 @@ function buildPayload(job, action) {
   };
 }
 
+// Convert a new legacy row from Overview into an App Jobs entry and sync it
+function parseLegacyNew(r) {
+  const payRaw = String(r.pay||"").trim();
+  const rcptRaw = String(r.receipt||"").trim();
+  const payUp = payRaw.toUpperCase();
+  const rcptLow = rcptRaw.toLowerCase();
+  let price = "";
+  if (r.payout!=null && r.payout!=="" && r.payout!=="-") {
+    const p = parseFloat(r.payout); if (!isNaN(p)&&p>0) price = p;
+  }
+  const needsPay = payUp.includes("NEEDS TO BE PAID");
+  const hasPay = payUp.includes("CASH")||payUp.includes("ZELLE")||payUp.includes("CHECK")||payUp.includes("CREDIT");
+  const hasChk = rcptRaw.includes("\u2705")||rcptRaw.includes("\u2611");
+  const hasRcpt = rcptLow.includes("receipt in tow");
+  let status = ST.MISSING;
+  if (!price&&price!==0) status=ST.MISSING;
+  else if (needsPay) status=ST.UNPAID;
+  else if (hasChk||hasRcpt||hasPay) status=ST.PAID;
+  else status=ST.UNPAID;
+  let payNorm = "Cash";
+  if (payUp.includes("ZELLE")) payNorm="Zelle";
+  else if (payUp.includes("CHECK")) payNorm="Check";
+  else if (payUp.includes("CREDIT")) payNorm="Credit Card";
+  else if (payUp.includes("INSURANCE")) payNorm="Pending Insurance";
+  else if (needsPay||payUp.includes("PENDING")) payNorm="Invoice Later";
+  else if (payUp.includes("CASH")) payNorm="Cash";
+  let cust = "";
+  const combo = (String(r.name)+" "+String(r.notes||"")).toLowerCase();
+  for (const p of PARTNERS) if (combo.includes(p.toLowerCase())) { cust=p; break; }
+  let jd = "";
+  if (r.date) try { jd=new Date(r.date).toISOString().split("T")[0]; } catch {}
+  const name = String(r.name||"").trim();
+  return {
+    id:"L"+r.n, jobDate:jd, jobTime:"",
+    vehicle:{color:"",make:"",model:"",year:"",vin:"",plate:""},
+    customer:{name:cust,phone:""}, owner:{name:"",homePhone:"",workPhone:""},
+    pickup:"",pickupCity:"",dropoff:"",dropoffCity:"",
+    services:price?{towing:price}:{}, price, paymentType:payNorm, tolls:"",
+    poNumber:"",raNumber:"", status, notes:String(r.notes||""),
+    legacyNum:String(r.n), receiptMissing:rcptLow.includes("missing receipt"),
+    vehiclePhoto:null, registrationPhoto:null, source:"migrated",
+    title:name
+  };
+}
+
 async function fetchAll() {
   try {
     const r = await fetch("/api/sync");
     const d = await r.json();
-    return (d.jobs||[]).map(parseRow);
+    const appJobs = (d.jobs||[]).map(parseRow);
+
+    // Auto-import any new rows from Overview that aren't in App Jobs yet
+    const newLegacy = d.newLegacy || [];
+    if (newLegacy.length > 0) {
+      console.log(`Auto-importing ${newLegacy.length} new jobs from Overview`);
+      const imported = [];
+      for (const row of newLegacy) {
+        const job = parseLegacyNew(row);
+        const ok = await syncJob(job, "add");
+        if (ok) imported.push(job);
+      }
+      return [...appJobs, ...imported];
+    }
+    return appJobs;
   } catch (e) { console.error(e); return null; }
 }
 
@@ -319,7 +378,8 @@ function EditPanel({job,onSave,onClose}){
           <div><div style={{fontSize:18,fontWeight:700,color:T.dark}}>{isM?`Job #${job.legacyNum}`:"Edit job"}</div>{isM&&<div style={{fontSize:12,color:T.muted,marginTop:3}}>Migrated — edits save directly</div>}</div>
           <button onClick={onClose} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${T.border}`,background:T.surface,color:T.dark,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
         </div>
-        {isM&&job.title&&<div style={{background:"#eff6ff",borderRadius:10,padding:14,marginBottom:16,fontSize:13,lineHeight:1.7}}><div style={{fontWeight:700,marginBottom:4}}>{job.title}</div><div style={{color:T.muted}}>Price: {job.price?money(job.price):"\u2014"} &middot; Payment: {job.paymentType||"\u2014"}</div></div>}
+        {isM&&job.title&&<div style={{background:"#eff6ff",borderRadius:10,padding:14,marginBottom:16,fontSize:13,lineHeight:1.7}}><div style={{color:T.muted}}>Original: {job.title}</div><div style={{color:T.muted}}>Migrated price: {job.price?money(job.price):"\u2014"} &middot; Payment: {job.paymentType||"\u2014"}</div></div>}
+        <div style={{marginBottom:14}}><label style={lbl}>Description</label><input value={j.title||""} onChange={e=>setJ(p=>({...p,title:e.target.value}))} placeholder="e.g. Gray Tesla from Bronx to JC Auto" style={inp} /></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}><div><label style={lbl}>Date</label><input type="date" value={j.jobDate} onChange={e=>u("jobDate",e.target.value)} style={inp} /></div><div><label style={lbl}>Time</label><input type="time" value={j.jobTime} onChange={e=>u("jobTime",e.target.value)} style={inp} /></div></div>
         <Section title="Customer"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><div><label style={lbl}>Name</label><input value={j.customer.name} onChange={e=>u("customer.name",e.target.value)} style={inp} /></div><div><label style={lbl}>Phone</label><input value={j.customer.phone} onChange={e=>u("customer.phone",e.target.value)} style={inp} /></div></div></Section>
         <Section title="Vehicle"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["Year","vehicle.year"],["Color","vehicle.color"],["Make","vehicle.make"],["Model","vehicle.model"]].map(([l2,p])=><div key={p}><label style={lbl}>{l2}</label><input value={p.split(".").reduce((o,k)=>o[k],j)} onChange={e=>u(p,e.target.value)} style={inp} /></div>)}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><div><label style={lbl}>VIN</label><input value={j.vehicle.vin} onChange={e=>u("vehicle.vin",e.target.value)} style={inp} /></div><div><label style={lbl}>Plate</label><input value={j.vehicle.plate} onChange={e=>u("vehicle.plate",e.target.value)} style={inp} /></div></div></Section>
