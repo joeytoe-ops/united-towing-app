@@ -7,7 +7,7 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzhCYclm89MmmaAyb-kDI02BYriBpURNgGoq_NOAPsanGv88FVUGgmjWteJFqTbOHGmPg/exec";
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyGaJ6I_CH0IoWX6ko_Rglzzx42at5S0XfVEhxv-UvZq49t9VgRh8HGWf_cqO6W8Zsgdg/exec";
 
   try {
     // GET = list all jobs from sheet
