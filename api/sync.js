@@ -3,7 +3,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "POST only" });
   }
 
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzhCYclm89MmmaAyb-kDI02BYriBpURNgGoq_NOAPsanG";
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzhCYclm89MmmaAyb-kDI02BYriBpURNgGoq_NOAPsanGv88FVUGgmjWteJFqTbOHGmPg/exec";
 
   try {
     const response = await fetch(SCRIPT_URL, {
