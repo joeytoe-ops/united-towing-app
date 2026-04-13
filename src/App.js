@@ -116,37 +116,42 @@ function legacyToJob(row) {
   if (rawDate) { try { jobDate = new Date(rawDate).toISOString().split("T")[0]; } catch {} }
   const payout = row.payout;
   const payType = String(row.paymentType || "");
-  const receipt = String(row.receiptStatus || "").toLowerCase();
+  const receipt = String(row.receiptStatus || "");
+  const receiptLower = receipt.toLowerCase();
   const notes = String(row.notes || "");
-  const parts = jobName.trim().split(/\s+/);
-  let color = "", make = "", model = "";
-  if (parts.length >= 3) { color = parts[0]; make = parts[1]; model = parts.slice(2).join(" "); }
-  else if (parts.length === 2) { make = parts[0]; model = parts[1]; }
-  else if (parts.length === 1) { make = parts[0]; }
-  const isPaid = receipt.includes("paid") || receipt === "yes" || receipt === "y" || (payType && payType !== "" && !receipt.includes("missing") && !receipt.includes("needs") && !receipt.includes("unpaid") && !receipt.includes("no"));
   const hasPrice = payout && !isNaN(parseFloat(payout)) && parseFloat(payout) > 0;
-  const needsPay = receipt.includes("needs") || receipt.includes("unpaid") || receipt.includes("no");
+
+  // Receipt status: checkmark or "paid" = paid. "needs"/"unpaid"/"missing"/"no"/"pending" = unpaid
+  const paidIndicators = ["\u2705", "paid", "yes", "y", "deposited", "received"];
+  const unpaidIndicators = ["needs", "unpaid", "missing", "no", "pending", "owed", "outstanding"];
+  const isPaid = paidIndicators.some(x => receiptLower.includes(x));
+  const isUnpaid = unpaidIndicators.some(x => receiptLower.includes(x));
+
   let status = STATUSES.MISSING;
-  if (hasPrice && isPaid && !needsPay) status = STATUSES.PAID;
+  if (hasPrice && isPaid && !isUnpaid) status = STATUSES.PAID;
   else if (hasPrice) status = STATUSES.UNPAID;
+
+  // Match partner names
   let customerName = "";
   const combined = (jobName + " " + notes).toLowerCase();
   for (const p of PARTNERS) { if (combined.includes(p.toLowerCase())) { customerName = p; break; } }
+
   return {
     id: "legacy-" + jobNum, createdAt: jobDate ? new Date(jobDate + "T12:00:00").toISOString() : new Date().toISOString(),
     jobDate, jobTime: "",
-    vehicle: { color, make, model, year: "", vin: "", plate: "" },
+    vehicle: { color: "", make: "", model: "", year: "", vin: "", plate: "" },
     customer: { name: customerName, phone: "", isPartner: !!customerName },
     owner:{name:"",homePhone:"",workPhone:""},
     pickup: "", pickupCity: "", dropoff: "", dropoffCity: "",
     services: hasPrice ? { towing: parseFloat(payout) } : {},
     price: hasPrice ? parseFloat(payout) : "", paymentType: payType || "Cash",
     tolls:"", poNumber:"", raNumber:"",
-    status, notes: notes + (jobName && !customerName ? " [" + jobName + "]" : ""),
+    status, notes: notes,
+    legacyTitle: jobName, // raw text from sheet, displayed as-is
     vehiclePhoto: null, registrationPhoto: null, receiptGenerated: false,
     paidDate: status === STATUSES.PAID ? (jobDate ? new Date(jobDate+"T12:00:00").toISOString() : null) : null,
     source: "legacy", legacyJobNumber: jobNum,
-    legacyRaw: { jobName, receiptStatus: row.receiptStatus, paymentType: row.paymentType }
+    legacyRaw: { jobName, receiptStatus: receipt, paymentType: row.paymentType }
   };
 }
 
@@ -829,15 +834,24 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout, loading, onRefresh }) {
   const aging={"0-30":0,"30-60":0,"60-90":0,"90+":0};
   unpaidJobs.forEach(j=>{const d=daysSince(j.createdAt);if(d<=30)aging["0-30"]++;else if(d<=60)aging["30-60"]++;else if(d<=90)aging["60-90"]++;else aging["90+"]++;});
   const accountMap={};
-  unpaidJobs.forEach(j=>{const name=j.customer.name||"Unknown";if(!accountMap[name])accountMap[name]={count:0,total:0,oldest:j.createdAt};accountMap[name].count++;accountMap[name].total+=parseFloat(j.price)||0;if(new Date(j.createdAt)<new Date(accountMap[name].oldest))accountMap[name].oldest=j.createdAt;});
-  const topAccounts=Object.entries(accountMap).sort((a,b)=>b[1].total-a[1].total).slice(0,8);
+  unpaidJobs.forEach(j=>{
+    const name=j.customer.name || (j.legacyTitle ? j.legacyTitle.slice(0,30) : "Unknown");
+    if(!accountMap[name])accountMap[name]={count:0,total:0,oldest:j.createdAt,isPartner:!!j.customer.name};
+    accountMap[name].count++;accountMap[name].total+=parseFloat(j.price)||0;
+    if(new Date(j.createdAt)<new Date(accountMap[name].oldest))accountMap[name].oldest=j.createdAt;
+  });
+  // Split into partner accounts (actionable) and one-offs
+  const partnerAccounts=Object.entries(accountMap).filter(([,d])=>d.isPartner).sort((a,b)=>b[1].total-a[1].total);
+  const oneOffAccounts=Object.entries(accountMap).filter(([,d])=>!d.isPartner).sort((a,b)=>b[1].total-a[1].total);
+  const oneOffTotal=oneOffAccounts.reduce((s,[,d])=>s+d.total,0);
+  const oneOffCount=oneOffAccounts.reduce((s,[,d])=>s+d.count,0);
 
   let filtered=sourceFiltered;
   if(filter==="action") filtered=sourceFiltered.filter(j=>j.status!==STATUSES.PAID);
   else if(filter==="unpaid") filtered=unpaidJobs;
   else if(filter==="missing") filtered=missingJobs;
   else if(filter==="paid") filtered=paidJobs;
-  if(search){const s=search.toLowerCase();filtered=filtered.filter(j=>(j.customer.name||"").toLowerCase().includes(s)||(j.vehicle.make||"").toLowerCase().includes(s)||(j.vehicle.model||"").toLowerCase().includes(s)||(j.vehicle.color||"").toLowerCase().includes(s)||(j.pickup||"").toLowerCase().includes(s)||(j.dropoff||"").toLowerCase().includes(s)||(j.notes||"").toLowerCase().includes(s));}
+  if(search){const s=search.toLowerCase();filtered=filtered.filter(j=>(j.customer.name||"").toLowerCase().includes(s)||(j.vehicle.make||"").toLowerCase().includes(s)||(j.vehicle.model||"").toLowerCase().includes(s)||(j.vehicle.color||"").toLowerCase().includes(s)||(j.pickup||"").toLowerCase().includes(s)||(j.dropoff||"").toLowerCase().includes(s)||(j.notes||"").toLowerCase().includes(s)||(j.legacyTitle||"").toLowerCase().includes(s));}
   filtered=[...filtered].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
 
   const handleSave = async (updated) => {
@@ -850,78 +864,115 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout, loading, onRefresh }) {
 
   return (
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
-      <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,padding:"14px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-        <div><div style={{fontSize:18,fontWeight:700,color:C.dark}}>United Towing</div><div style={{fontSize:12,color:C.muted}}>{loading?"Loading...":`${jobs.length} jobs`}</div></div>
+      <div style={{background:C.dark,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <div><div style={{fontSize:17,fontWeight:700,color:"#fff"}}>United Towing</div><div style={{fontSize:11,color:"#888"}}>{loading?"Loading...":`${jobs.length} jobs`}</div></div>
         <div style={{display:"flex",gap:8}}>
-          <button onClick={onRefresh} style={{...baseBtn,background:C.bg,color:C.muted,fontSize:12,padding:"8px 12px"}}>{loading?"\u23F3":"\u21BB"}</button>
-          <button onClick={onNewJob} style={{...baseBtn,background:C.dark,color:"#fff",fontSize:13}}>+ Log job</button>
-          <button onClick={onLogout} style={{...baseBtn,background:C.border,color:C.muted,fontSize:12}}>Out</button>
+          <button onClick={onRefresh} style={{...baseBtn,background:"rgba(255,255,255,0.1)",color:"#fff",fontSize:12,padding:"8px 12px"}}>{loading?"\u23F3":"\u21BB"}</button>
+          <button onClick={onNewJob} style={{...baseBtn,background:"#fff",color:C.dark,fontSize:13}}>+ Log job</button>
+          <button onClick={onLogout} style={{...baseBtn,background:"rgba(255,255,255,0.1)",color:"#888",fontSize:11,padding:"8px 10px"}}>Out</button>
         </div>
       </div>
-      <div style={{padding:"20px 24px",maxWidth:1200,margin:"0 auto"}}>
-        <div style={{display:"flex",gap:6,marginBottom:16}}>
+      <div style={{padding:"16px 20px",maxWidth:900,margin:"0 auto"}}>
+        {/* Source tabs */}
+        <div style={{display:"flex",gap:6,marginBottom:14}}>
           {[["all","All"],["legacy","Legacy ("+legacyCount+")"],["app","App ("+appCount+")"]].map(([k,label])=>(
-            <span key={k} onClick={()=>setSourceFilter(k)} style={{padding:"6px 14px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",background:sourceFilter===k?C.dark:C.white,color:sourceFilter===k?"#fff":C.muted,border:`1.5px solid ${sourceFilter===k?C.dark:C.border}`}}>{label}</span>
+            <span key={k} onClick={()=>setSourceFilter(k)} style={{padding:"5px 12px",borderRadius:16,fontSize:12,fontWeight:600,cursor:"pointer",background:sourceFilter===k?C.dark:C.white,color:sourceFilter===k?"#fff":C.muted,border:`1px solid ${sourceFilter===k?C.dark:C.border}`}}>{label}</span>
           ))}
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10,marginBottom:20}}>
-          {[{label:"Total jobs",val:sourceFiltered.length,sub:"filtered",bg:C.bg,color:C.dark},{label:"Collected",val:"$"+Math.round(totalCollected).toLocaleString(),sub:`${paidJobs.length} paid`,bg:C.lightGreen,color:C.success},{label:"Unpaid",val:"$"+Math.round(totalUnpaid).toLocaleString(),sub:`${unpaidJobs.length} jobs`,bg:C.lightRed,color:C.danger},{label:"Missing info",val:missingJobs.length,sub:"no price",bg:C.lightYellow,color:C.warning}].map((mt,i)=>(
-            <div key={i} style={{background:mt.bg,borderRadius:10,padding:"12px 14px"}}>
-              <div style={{fontSize:11,fontWeight:600,color:mt.color,textTransform:"uppercase",letterSpacing:0.5}}>{mt.label}</div>
-              <div style={{fontSize:22,fontWeight:700,color:mt.color,marginTop:2}}>{mt.val}</div>
-              <div style={{fontSize:11,color:mt.color,opacity:0.7}}>{mt.sub}</div>
+
+        {/* Metrics row */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:16}}>
+          {[
+            {label:"Jobs",val:sourceFiltered.length,bg:C.bg,color:C.dark},
+            {label:"Collected",val:"$"+Math.round(totalCollected).toLocaleString(),bg:C.lightGreen,color:C.success},
+            {label:"Unpaid",val:"$"+Math.round(totalUnpaid).toLocaleString(),bg:C.lightRed,color:C.danger},
+            {label:"Missing",val:missingJobs.length,bg:C.lightYellow,color:C.warning}
+          ].map((mt,i)=>(
+            <div key={i} style={{background:mt.bg,borderRadius:8,padding:"10px 12px",textAlign:"center"}}>
+              <div style={{fontSize:10,fontWeight:600,color:mt.color,textTransform:"uppercase",letterSpacing:0.5}}>{mt.label}</div>
+              <div style={{fontSize:18,fontWeight:700,color:mt.color,marginTop:2}}>{mt.val}</div>
             </div>
           ))}
         </div>
-        <div style={{background:C.white,borderRadius:10,padding:"16px 20px",boxShadow:C.cardShadow,marginBottom:16}}>
-          <div style={{fontSize:15,fontWeight:700,color:C.danger,marginBottom:12}}>{"\u26A0\uFE0F"} Unpaid \u2014 chase these</div>
-          {topAccounts.length===0?<div style={{fontSize:13,color:C.muted,padding:16,textAlign:"center"}}>No unpaid accounts</div>:
-          topAccounts.map(([name,data],i)=>(
-            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:i<topAccounts.length-1?`1px solid ${C.border}`:"none"}}>
-              <div><div style={{fontSize:14,fontWeight:600,color:C.dark}}>{name||"Unknown"}</div><div style={{fontSize:11,color:C.muted}}>{data.count} unpaid &middot; {daysSince(data.oldest)}d</div></div>
-              <div style={{fontSize:16,fontWeight:700,color:C.danger}}>{formatMoney(data.total)}</div>
+
+        {/* Unpaid partners + Aging side by side */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+          {/* Unpaid partner accounts */}
+          <div style={{background:C.white,borderRadius:10,padding:"14px 16px",boxShadow:C.cardShadow}}>
+            <div style={{fontSize:14,fontWeight:700,color:C.danger,marginBottom:10}}>Unpaid partners</div>
+            {partnerAccounts.length===0?<div style={{fontSize:12,color:C.muted,textAlign:"center",padding:12}}>None</div>:
+            partnerAccounts.map(([name,data],i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:i<partnerAccounts.length-1?`1px solid ${C.border}`:"none"}}>
+                <div><div style={{fontSize:13,fontWeight:600,color:C.dark}}>{name}</div><div style={{fontSize:10,color:C.muted}}>{data.count} jobs &middot; {daysSince(data.oldest)}d</div></div>
+                <div style={{fontSize:14,fontWeight:700,color:C.danger}}>{formatMoney(data.total)}</div>
+              </div>
+            ))}
+            {oneOffCount>0 && <div style={{padding:"7px 0",borderTop:`1px solid ${C.border}`,marginTop:4}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <div><div style={{fontSize:13,fontWeight:600,color:C.muted}}>One-off customers</div><div style={{fontSize:10,color:C.muted}}>{oneOffCount} jobs</div></div>
+                <div style={{fontSize:14,fontWeight:700,color:C.muted}}>{formatMoney(oneOffTotal)}</div>
+              </div>
+            </div>}
+            <div style={{marginTop:8,paddingTop:8,borderTop:`2px solid ${C.border}`,display:"flex",justifyContent:"space-between",fontSize:13,fontWeight:700}}>
+              <span>Total</span><span style={{color:C.danger}}>{formatMoney(totalUnpaid)}</span>
             </div>
-          ))}
-          {topAccounts.length>0 && <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",fontSize:14,fontWeight:700}}><span>Total outstanding</span><span style={{color:C.danger}}>{formatMoney(totalUnpaid)}</span></div>}
+          </div>
+
+          {/* Aging */}
+          <div style={{background:C.white,borderRadius:10,padding:"14px 16px",boxShadow:C.cardShadow}}>
+            <div style={{fontSize:14,fontWeight:700,color:C.dark,marginBottom:10}}>Aging</div>
+            {[{label:"0\u201330 days",count:aging["0-30"],color:C.success},{label:"30\u201360 days",count:aging["30-60"],color:C.warning},{label:"60\u201390 days",count:aging["60-90"],color:"#D85A30"},{label:"90+ days",count:aging["90+"],color:C.danger}].map((a,i)=>(
+              <div key={i} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted,marginBottom:3}}><span>{a.label}</span><span style={{fontWeight:600}}>{a.count}</span></div>
+                <div style={{height:10,borderRadius:4,background:C.bg,overflow:"hidden"}}><div style={{width:`${Math.round((a.count/maxAging)*100)}%`,height:"100%",background:a.color,borderRadius:4}} /></div>
+              </div>
+            ))}
+            <div style={{fontSize:11,color:C.muted,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`}}>Goal: collect within 30 days</div>
+          </div>
         </div>
-        <div style={{background:C.white,borderRadius:10,padding:"16px 20px",boxShadow:C.cardShadow,marginBottom:16}}>
-          <div style={{fontSize:15,fontWeight:700,color:C.dark,marginBottom:12}}>Aging</div>
-          {[{label:"0-30d",count:aging["0-30"],color:C.success},{label:"30-60d",count:aging["30-60"],color:C.warning},{label:"60-90d",count:aging["60-90"],color:"#D85A30"},{label:"90+d",count:aging["90+"],color:C.danger}].map((a,i)=>(
-            <div key={i} style={{marginBottom:12}}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:C.muted,marginBottom:3}}><span>{a.label}</span><span>{a.count}</span></div>
-              <div style={{height:12,borderRadius:4,background:C.bg,overflow:"hidden"}}><div style={{width:`${Math.round((a.count/maxAging)*100)}%`,height:"100%",background:a.color,borderRadius:4}} /></div>
-            </div>
-          ))}
-        </div>
-        <div style={{background:C.white,borderRadius:10,padding:"16px 20px",boxShadow:C.cardShadow}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-            <div style={{fontSize:15,fontWeight:700,color:C.dark}}>Jobs</div>
-            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." style={{padding:"6px 10px",fontSize:13,borderRadius:6,border:`1px solid ${C.border}`,width:140}} />
+
+        {/* Job list */}
+        <div style={{background:C.white,borderRadius:10,padding:"14px 16px",boxShadow:C.cardShadow}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:6}}>
+            <div style={{fontSize:14,fontWeight:700,color:C.dark}}>Jobs</div>
+            <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." style={{padding:"5px 8px",fontSize:12,borderRadius:6,border:`1px solid ${C.border}`,width:120}} />
               {["action","unpaid","missing","paid","all"].map(f=>(
-                <span key={f} onClick={()=>setFilter(f)} style={{padding:"4px 10px",borderRadius:14,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",background:filter===f?C.dark:C.bg,color:filter===f?"#fff":C.muted}}>{f==="action"?"Action":f.charAt(0).toUpperCase()+f.slice(1)}</span>
+                <span key={f} onClick={()=>setFilter(f)} style={{padding:"3px 8px",borderRadius:12,fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",background:filter===f?C.dark:C.bg,color:filter===f?"#fff":C.muted}}>{f==="action"?"Needs action":f.charAt(0).toUpperCase()+f.slice(1)}</span>
               ))}
             </div>
           </div>
           <div>
-            {filtered.slice(0,80).map(j=>(
-              <div key={j.id} onClick={()=>setEditing(j)} style={{padding:"12px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:14,fontWeight:600,color:C.dark}}>{[j.vehicle.color,j.vehicle.make,j.vehicle.model].filter(Boolean).join(" ")||"No vehicle info"}<SourceBadge source={j.source} /></div>
-                    <div style={{fontSize:13,color:C.muted,marginTop:2}}>{j.customer.name||"No customer"} &middot; {formatDate(j.jobDate||j.createdAt)}</div>
+            {filtered.slice(0,100).map(j=>{
+              // Display: legacy shows raw title, app shows structured vehicle info
+              const title = j.source==="legacy" && j.legacyTitle
+                ? j.legacyTitle
+                : ([j.vehicle.color,j.vehicle.make,j.vehicle.model].filter(Boolean).join(" ")||"No vehicle info");
+              const subtitle = j.source==="legacy"
+                ? [j.customer.name, formatDate(j.jobDate||j.createdAt)].filter(Boolean).join(" \u00B7 ")
+                : [j.customer.name||"No customer", formatDate(j.jobDate||j.createdAt)].filter(Boolean).join(" \u00B7 ");
+              return (
+                <div key={j.id} onClick={()=>setEditing(j)} style={{padding:"10px 0",borderBottom:`1px solid ${C.border}`,cursor:"pointer"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:C.dark,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {title}
+                        {j.source==="legacy"&&<span style={{padding:"1px 5px",borderRadius:6,fontSize:9,fontWeight:600,background:C.lightBlue,color:"#1565c0",marginLeft:6,verticalAlign:"middle"}}>L</span>}
+                      </div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:2}}>{subtitle}</div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:14,fontWeight:700}}>{j.price&&!isNaN(j.price)?formatMoney(j.price):<span style={{color:C.warning,fontSize:12}}>No price</span>}</div>
+                      <StatusBadge status={j.status} price={j.price} />
+                    </div>
                   </div>
-                  <div style={{textAlign:"right",marginLeft:12}}>
-                    <div style={{fontSize:15,fontWeight:700}}>{j.price&&!isNaN(j.price)?formatMoney(j.price):<span style={{color:C.warning,fontSize:13}}>No price</span>}</div>
-                    <StatusBadge status={j.status} price={j.price} />
-                  </div>
+                  {j.source!=="legacy"&&(j.pickup||j.dropoff)&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{[j.pickup,j.dropoff].filter(Boolean).join(" \u2192 ")}</div>}
                 </div>
-                {(j.pickup||j.dropoff)&&<div style={{fontSize:12,color:C.muted}}>{[j.pickup,j.dropoff].filter(Boolean).join(" \u2192 ")}</div>}
-              </div>
-            ))}
+              );
+            })}
           </div>
-          {filtered.length>80&&<div style={{textAlign:"center",padding:12,fontSize:12,color:C.muted}}>Showing 80 of {filtered.length}</div>}
-          {filtered.length===0&&<div style={{textAlign:"center",padding:24,fontSize:14,color:C.muted}}>No jobs match</div>}
+          {filtered.length>100&&<div style={{textAlign:"center",padding:10,fontSize:11,color:C.muted}}>Showing 100 of {filtered.length}</div>}
+          {filtered.length===0&&<div style={{textAlign:"center",padding:20,fontSize:13,color:C.muted}}>No jobs match</div>}
         </div>
       </div>
       {editing&&<InvoicePanel job={editing} onSave={handleSave} onClose={()=>setEditing(null)} />}
