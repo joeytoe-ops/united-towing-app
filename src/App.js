@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
 const APP_PIN = "united149";
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbzP1CcnlBSOlCDotGeVgsJlGyrI_710nUWkiqnBu7dNWkCnxprBdFYQqaZjQxV66EgN_A/exec";
+const SHEETS_URL = "api/sync";
 
 const PARTNERS = [
   "JC Auto","Gabe Citgo","Karls Auto Body","Tasca Ford","Hartsdale Mobil",
@@ -38,37 +38,35 @@ function loadJobs() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)|
 function saveJobs(jobs) { localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs)); }
 
 async function syncToSheets(job) {
-  try {
-    const dateStr = job.jobDate || new Date().toISOString().split("T")[0];
-    const timeStr = job.jobTime || new Date().toTimeString().slice(0,5);
-    const resp = await fetch(SHEETS_URL, {
-      method:"POST", mode:"no-cors",
-      headers:{"Content-Type":"text/plain"},
-      body: JSON.stringify({
-        id: job.id,
-        date: dateStr,
-        time: timeStr,
-        vehicleColor: job.vehicle.color,
-        vehicleMake: job.vehicle.make,
-        vehicleModel: job.vehicle.model,
-        vehicleYear: job.vehicle.year,
-        vin: job.vehicle.vin,
-        plate: job.vehicle.plate,
-        customerName: job.customer.name,
-        customerPhone: job.customer.phone,
-        pickup: job.pickup,
-        dropoff: job.dropoff,
-        serviceType: job.serviceType,
-        price: job.price,
-        paymentType: job.paymentType,
-        status: job.status,
-        notes: job.notes,
-        vehiclePhoto: job.vehiclePhoto ? "Yes" : "",
-        registrationPhoto: job.registrationPhoto ? "Yes" : ""
-      })
-    });
-    return true;
-  } catch(err) { console.error("Sheets sync error:", err); return false; }
+  try {
+    const response = await fetch("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: job.id,
+        date: job.jobDate || new Date().toISOString().split("T")[0],
+        time: job.jobTime || new Date().toTimeString().slice(0,5),
+        color: job.vehicle?.color || "",
+        make: job.vehicle?.make || "",
+        model: job.vehicle?.model || "",
+        year: job.vehicle?.year || "",
+        vin: job.vehicle?.vin || "",
+        plate: job.vehicle?.plate || "",
+        customer: job.customer?.name || "",
+        phone: job.customer?.phone || "",
+        pickup: job.pickup || "",
+        dropoff: job.dropoff || "",
+        service: job.serviceType || "",
+        price: job.price || "",
+        payment: job.paymentType || "",
+        status: job.status || "",
+        notes: job.notes || ""
+      })
+    });
+    const data = await response.json();
+    console.log("Sheets sync:", data);
+    return true;
+  } catch(err) { console.error("Sheets sync error:", err); return false; }
 }
 
 const C = {
