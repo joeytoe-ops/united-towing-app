@@ -61,8 +61,8 @@ async function syncToSheets(job) {
         payment: job.paymentType || "",
         status: job.status || "",
         notes: job.notes || "",
-        vehiclePhoto: job.vehiclePhoto || "",
-        regPhoto: job.registrationPhoto || ""
+        vehiclePhoto:  "",
+        regPhoto:  ""
       })
     });
     const data = await response.json();
