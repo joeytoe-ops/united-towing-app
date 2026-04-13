@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzAHhEM7sWfhmMqozMa0GU45t0ARiNbz2FAtJH6yk3Us-w6Jb_UCx79nRIF4OvTsgyqJA/exec";
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyd8OqmeoTJRsaBVIyyvBeBfpJcjtS-QIjFZtKyWqwEhNmNpe_NAFs6k0lHmx6SOThj/exec";
 
   try {
     if (req.method === "GET") {
