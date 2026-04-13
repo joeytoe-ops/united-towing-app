@@ -68,6 +68,170 @@ async function syncToSheets(job) {
   } catch(err) { console.error("Sheets sync error:", err); return false; }
 }
 
+async function generateInvoicePDF(job) {
+  if (!window.jspdf) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "pt", format: "letter" });
+  const w = 612, h = 792, m = 36, pw = w - 2 * m;
+  let y = m;
+  const dark = [26, 26, 46], blue = [26, 10, 110], wh = [255, 255, 255];
+
+  function box(x, by, bw, bh, label, value, vs) {
+    vs = vs || 10;
+    doc.setDrawColor(51); doc.setLineWidth(0.5); doc.rect(x, by, bw, bh);
+    doc.setFontSize(6); doc.setFont("helvetica", "normal"); doc.setTextColor(...dark);
+    doc.text(label, x + 3, by + 8);
+    if (value) {
+      doc.setFontSize(vs); doc.setFont("helvetica", "bold"); doc.setTextColor(...blue);
+      doc.text(String(value), x + 4, by + bh - 4); doc.setTextColor(...dark);
+    }
+  }
+  function cb(x, cy, checked) {
+    doc.rect(x, cy, 9, 9);
+    if (checked) { doc.setFontSize(7); doc.setFont("helvetica", "bold"); doc.text("X", x + 2, cy + 7.5); }
+  }
+
+  doc.setFillColor(...dark); doc.rect(m, y, pw, 32, "F");
+  doc.setTextColor(...wh); doc.setFontSize(22); doc.setFont("helvetica", "bold");
+  doc.text("24 HOUR TOWING", w/2, y+24, {align:"center"}); y += 38;
+
+  doc.setTextColor(...dark); doc.setFontSize(20); doc.text("UNITED", w/2, y+14, {align:"center"}); y += 18;
+  doc.setFontSize(9); doc.setFont("helvetica","normal"); doc.text("TOWING & TRANSPORT", w/2, y+9, {align:"center"}); y += 14;
+  doc.setFontSize(8); doc.text("\"Local & Long Distance\"     \"Flatbed Specialists\"", w/2, y+8, {align:"center"}); y += 12;
+  doc.setFontSize(7);
+  doc.text("Towing \u2022 Emergency Starting \u2022 Battery Service \u2022 Flat Tire Service", w/2, y+7, {align:"center"}); y += 9;
+  doc.text("Vehicle Locksmith Services \u2022 Unauthorized Tows \u2022 Fuel Delivery", w/2, y+7, {align:"center"}); y += 14;
+
+  doc.setFillColor(232,232,224); doc.rect(m, y, pw, 24, "FD");
+  doc.setTextColor(...dark); doc.setFontSize(16); doc.setFont("helvetica","bold");
+  doc.text("914-500-5570", w/2, y+18, {align:"center"}); y += 25;
+
+  var rh = 26, dw = pw*0.60, tw = pw*0.40;
+  var timeStr = job.jobTime || "";
+  var hr = parseInt(timeStr.split(":")[0]||"12");
+  var ap = hr >= 12 ? "PM" : "AM";
+  var dh = hr > 12 ? hr-12 : (hr===0?12:hr);
+  var dt = dh + ":" + (timeStr.split(":")[1]||"00");
+  var ds = job.jobDate ? new Date(job.jobDate+"T12:00:00").toLocaleDateString("en-US") : "";
+
+  box(m, y, dw, rh, "DATE:", ds);
+  doc.rect(m+dw, y, tw, rh);
+  doc.setFontSize(6); doc.setFont("helvetica","normal"); doc.setTextColor(...dark);
+  doc.text("TIME:", m+dw+3, y+8);
+  if (timeStr) { doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...blue); doc.text(dt, m+dw+4, y+rh-4); doc.setTextColor(...dark); }
+  var ax = m+dw+tw-62, px = m+dw+tw-30, cy2 = y+8;
+  cb(ax, cy2, ap==="AM"); doc.setFontSize(7); doc.setFont("helvetica","bold"); doc.text("AM", ax+11, cy2+7);
+  cb(px, cy2, ap==="PM"); doc.text("PM", px+11, cy2+7); y += rh;
+
+  box(m, y, dw, rh, "CUSTOMER:", job.customer?.name||"");
+  box(m+dw, y, tw, rh, "PHONE:", job.customer?.phone||""); y += rh;
+  box(m, y, dw, rh, "PICKUP LOCATION:", job.pickup||"");
+  box(m+dw, y, tw, rh, "CITY:", ""); y += rh;
+  box(m, y, dw, rh, "DELIVERY LOCATION:", job.dropoff||"");
+  box(m+dw, y, tw, rh, "CITY:", ""); y += rh;
+
+  var vc = [["YR:",job.vehicle?.year,0.10],["MAKE:",job.vehicle?.make,0.14],["MODEL:",job.vehicle?.model,0.14],["COLOR:",job.vehicle?.color,0.14],["VIN:",job.vehicle?.vin,0.48]];
+  var vx = m; vc.forEach(function(v){box(vx, y, pw*v[2], rh, v[0], v[1]||"", 9); vx += pw*v[2];}); y += rh;
+
+  var oc = [["VEHICLE OWNER:","",0.30],["HOME PHONE:","",0.22],["WORK PHONE:","",0.22],["LIC. NO.:",job.vehicle?.plate,0.26]];
+  var ox = m; oc.forEach(function(o){box(ox, y, pw*o[2], rh, o[0], o[1]||"", 9); ox += pw*o[2];}); y += rh+3;
+
+  var rw = pw*0.52, sw = pw*0.48, sx = m+rw, hh = 16, sr = 19, nr = 12, bh = sr*nr;
+  doc.rect(m, y, rw, hh); doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...dark);
+  doc.text("REMARKS", m+rw/2, y+12, {align:"center"});
+  doc.rect(m, y+hh, rw, bh);
+  var rem = job.notes||"";
+  if (rem) { doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...blue); doc.text(rem, m+8, y+hh+14); doc.setTextColor(...dark); }
+  var pay = job.paymentType||"";
+  if (pay) { doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...blue); doc.text("PAID "+pay.toUpperCase(), m+8, y+hh+bh-8); doc.setTextColor(...dark); }
+
+  doc.rect(sx, y, sw, hh); doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.setTextColor(...dark);
+  doc.text("SERVICES PERFORMED", sx+sw/2, y+12, {align:"center"});
+
+  var price = parseFloat(job.price)||0, tolls = parseFloat(job.invoiceDetails?.tolls)||0;
+  var sub = price+tolls, tax = Math.round(sub*TAX_RATE*100)/100;
+  var ccf = job.paymentType==="Credit Card"?Math.round(sub*0.045*100)/100:0;
+  var tot = Math.round((sub+tax+ccf)*100)/100;
+  var sm = {"Tow":"towing","Jump Start":"road_service","Tire Change":"road_service","Winch":"winch","Transport":"towing","Storage":"storage","Impound":"towing","Road Service":"road_service"};
+  var ak = sm[job.serviceType]||"towing";
+
+  var rows = [["TOWING","towing"],["WAITING TIME","waiting"],["WINCH","winch"],["ROAD SERVICE","road_service"],["GATE FEE","gate_fee"],["ADMIN FEE","admin_fee"],["STORAGE","storage"],["SUBTOTAL","_sub"],["TAX","_tax"],["TOLLS","_tolls"],["CC PROCESS FEE (4.5%)","_cc"],["TOTAL DUE","_total"]];
+  var sy2 = y+hh;
+  rows.forEach(function(r) {
+    doc.setDrawColor(51); doc.setLineWidth(0.5); doc.rect(sx, sy2, sw, sr);
+    var val = "";
+    if (r[1]==="_sub") val = sub>0?sub.toFixed(2):"";
+    else if (r[1]==="_tax") val = tax>0?tax.toFixed(2):"";
+    else if (r[1]==="_tolls") val = tolls>0?tolls.toFixed(2):"";
+    else if (r[1]==="_cc") val = ccf>0?ccf.toFixed(2):"";
+    else if (r[1]==="_total") val = tot>0?tot.toFixed(2):"";
+    else if (r[1]===ak) val = price>0?price.toFixed(2):"";
+    cb(sx+5, sy2+5, !!val);
+    var it = r[0]==="TOTAL DUE";
+    doc.setFontSize(8); doc.setFont("helvetica", it?"bold":"normal"); doc.setTextColor(...dark);
+    doc.text(r[0], sx+20, sy2+sr-6);
+    if (val) { doc.setFontSize(it?11:10); doc.setFont("helvetica","bold"); doc.setTextColor(...blue); doc.text(val, sx+sw-6, sy2+sr-5, {align:"right"}); doc.setTextColor(...dark); }
+    sy2 += sr;
+  });
+  y += hh+bh+3;
+
+  var lw = pw*0.52, rw2 = pw*0.48, blh = 52;
+  doc.rect(m, y, lw, blh);
+  doc.setFontSize(9); doc.setFont("helvetica","bold"); doc.text("DAMAGE WAIVER", m+lw/2, y+12, {align:"center"});
+  doc.setFontSize(5.5); doc.setFont("helvetica","normal");
+  var wv = ["I acknowledge towing or servicing the above referenced vehicle may result","in damage or loss, including loss or theft of personal items. I assume","full responsibility and release United Towing & Transport LLC and it's","representatives from any liability."];
+  var wy2 = y+22; wv.forEach(function(l){doc.text(l, m+4, wy2); wy2 += 7;});
+
+  doc.rect(m+lw, y, rw2, blh);
+  doc.setFontSize(8); var py2 = y+14;
+  ["CASH","CK#","CHARGE ACCOUNT"].forEach(function(pm){
+    var cx2 = m+lw+8;
+    cb(cx2, py2-3, pay.toUpperCase()===pm.split("#")[0].trim());
+    doc.setFont("helvetica","normal"); doc.text(pm, cx2+12, py2+4); py2 += 12;
+  });
+  y += blh+2;
+
+  var ph2 = 20, hw = pw*0.50;
+  doc.rect(m, y, hw, ph2); doc.setFontSize(6); doc.text("P.O.#", m+3, y+8);
+  doc.rect(m+hw, y, hw, ph2); doc.text("R.A.#", m+hw+3, y+8); y += ph2+3;
+
+  doc.setFontSize(7); doc.text("x ___________________________________", m, y+8);
+  doc.text("OWNER / AGENT", m+20, y+16); y += 22;
+
+  var ah = 36;
+  doc.rect(m, y, lw, ah);
+  doc.setFontSize(8); doc.setFont("helvetica","bold"); doc.text("ACKNOWLEDGMENT", m+lw/2, y+10, {align:"center"});
+  doc.setFontSize(5.5); doc.setFont("helvetica","normal");
+  doc.text("I acknowledge receipt of the above referenced vehicle and hereby", m+4, y+20);
+  doc.text("release United Towing & Transport LLC from all liability.", m+4, y+27);
+  y += ah+2;
+  doc.setFontSize(7); doc.text("x ___________________________________", m, y+8);
+  doc.text("OWNER / AGENT", m+20, y+16); y += 22;
+
+  var bh2 = 26;
+  doc.setFontSize(18); doc.setFont("helvetica","bold"); doc.setTextColor(...dark);
+  doc.text("No. "+(job.id||"").slice(-6).toUpperCase(), m+4, y+18);
+  var tw2 = pw*0.42, tx2 = m+pw-tw2;
+  doc.setFillColor(...dark); doc.rect(tx2, y, tw2*0.55, bh2, "F");
+  doc.setTextColor(...wh); doc.setFontSize(14); doc.text("TOTAL", tx2+tw2*0.275, y+18, {align:"center"});
+  doc.setTextColor(...dark); doc.rect(tx2+tw2*0.55, y, tw2*0.45, bh2);
+  if (tot>0) { doc.setFontSize(15); doc.setFont("helvetica","bold"); doc.setTextColor(...blue); doc.text(tot.toFixed(2), tx2+tw2-6, y+18, {align:"right"}); }
+  y += bh2+3;
+  doc.setTextColor(...dark); doc.setFontSize(7); doc.setFont("helvetica","normal");
+  doc.text("Thank You For Your Business", w-m, y+6, {align:"right"});
+
+  var cn = (job.customer?.name||"job").replace(/[^a-zA-Z0-9]/g,"_").slice(0,20);
+  doc.save("UnitedTowing_"+cn+"_"+(job.jobDate||"").replace(/-/g,"")+".pdf");
+}
+
 const C = {
   bg:"#f7f6f3",white:"#ffffff",dark:"#1a1a2e",accent:"#2d6a4f",
   danger:"#c1292e",warning:"#e8871e",success:"#2d6a4f",muted:"#8a8a8a",
@@ -80,8 +244,7 @@ function PhotoCapture({ label, icon, value, onChange }) {
   const inputRef = useRef(null);
   const [preview, setPreview] = useState(value);
   const handleCapture = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
     reader.onloadend = () => { setPreview(reader.result); onChange(reader.result); };
     reader.readAsDataURL(file);
@@ -97,8 +260,7 @@ function PhotoCapture({ label, icon, value, onChange }) {
         </div>
       ) : (
         <div onClick={()=>inputRef.current?.click()} style={{border:`1.5px dashed ${C.border}`,borderRadius:8,padding:"20px 8px",textAlign:"center",color:C.muted,fontSize:12,cursor:"pointer",background:C.white}}>
-          <div style={{fontSize:22,marginBottom:2}}>{icon}</div>
-          Tap to capture
+          <div style={{fontSize:22,marginBottom:2}}>{icon}</div>Tap to capture
         </div>
       )}
       <input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={handleCapture} style={{display:"none"}} />
@@ -140,6 +302,7 @@ function CaptureForm({ onSubmit, onCancel }) {
     if (!job.customer.name && !customCustomer) return;
     const final={...job};
     if(!final.price||isNaN(final.price)) final.status=STATUSES.MISSING;
+    if(final.status===STATUSES.PAID) final.paidDate=new Date().toISOString();
     setSyncing(true);
     await syncToSheets(final);
     onSubmit(final);
@@ -214,6 +377,22 @@ function CaptureForm({ onSubmit, onCancel }) {
           </select></div>
         </div>
         <div style={{marginBottom:14}}>
+          <label style={labelStyle}>Payment status</label>
+          <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:`1.5px solid ${C.border}`}}>
+            <div onClick={()=>update("status",STATUSES.PAID)}
+              style={{flex:1,padding:"11px 0",textAlign:"center",fontSize:14,fontWeight:600,cursor:"pointer",
+                background:job.status===STATUSES.PAID?C.success:C.white,color:job.status===STATUSES.PAID?"#fff":C.muted,transition:"all 0.15s"}}>
+              Paid
+            </div>
+            <div onClick={()=>update("status",STATUSES.UNPAID)}
+              style={{flex:1,padding:"11px 0",textAlign:"center",fontSize:14,fontWeight:600,cursor:"pointer",
+                background:job.status===STATUSES.UNPAID?C.danger:C.white,color:job.status===STATUSES.UNPAID?"#fff":C.muted,
+                borderLeft:`1px solid ${C.border}`,transition:"all 0.15s"}}>
+              Needs Payment
+            </div>
+          </div>
+        </div>
+        <div style={{marginBottom:14}}>
           <label style={labelStyle}>License plate (optional)</label>
           <input value={job.vehicle.plate} onChange={e=>update("vehicle.plate",e.target.value)} placeholder="e.g. ABC 1234" style={inputStyle} />
         </div>
@@ -237,6 +416,7 @@ function CaptureForm({ onSubmit, onCancel }) {
 
 function InvoicePanel({ job, onSave, onClose }) {
   const [j, setJ] = useState(JSON.parse(JSON.stringify(job)));
+  const [generating, setGenerating] = useState(false);
   const update = (path,val) => {
     setJ(prev => { const c=JSON.parse(JSON.stringify(prev)); const k=path.split("."); let r=c; for(let i=0;i<k.length-1;i++) r=r[k[i]]; r[k[k.length-1]]=val; return c; });
   };
@@ -245,6 +425,12 @@ function InvoicePanel({ job, onSave, onClose }) {
   const ccFee=j.paymentType==="Credit Card"?Math.round(subtotal*0.045*100)/100:0;
   const total=Math.round((subtotal+tax+ccFee)*100)/100;
   const markPaid=()=>{update("status",STATUSES.PAID);update("paidDate",new Date().toISOString());};
+  const handleGeneratePDF = async () => {
+    setGenerating(true);
+    try { await generateInvoicePDF({...j, invoiceDetails:{...j.invoiceDetails, subtotal, tax, total, ccFee, tolls}}); }
+    catch(err) { console.error("PDF error:", err); alert("Error generating PDF"); }
+    setGenerating(false);
+  };
   const labelStyle={fontSize:11,fontWeight:600,color:C.muted,display:"block",marginBottom:3,textTransform:"uppercase",letterSpacing:0.5};
   const inputStyle={width:"100%",padding:"9px 10px",fontSize:14,borderRadius:6,border:`1.5px solid ${C.border}`,background:C.white,boxSizing:"border-box",fontFamily:"inherit"};
   return (
@@ -299,10 +485,14 @@ function InvoicePanel({ job, onSave, onClose }) {
           </div>
         </div>
         <div style={{marginBottom:14}}><label style={labelStyle}>Notes</label><textarea value={j.notes} onChange={e=>update("notes",e.target.value)} rows={2} style={{...inputStyle,resize:"vertical"}} /></div>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
           {j.status!==STATUSES.PAID&&<button onClick={markPaid} style={{...baseBtn,flex:1,background:C.success,color:"#fff"}}>Mark as paid</button>}
           <button onClick={()=>{const saved={...j,invoiceDetails:{...j.invoiceDetails,subtotal,tax,total,ccFee},receiptGenerated:true};onSave(saved);}} style={{...baseBtn,flex:1,background:C.dark,color:"#fff"}}>Save invoice</button>
         </div>
+        <button onClick={handleGeneratePDF} disabled={generating}
+          style={{...baseBtn,width:"100%",padding:12,fontSize:14,background:generating?"#666":"#b35900",color:"#fff",borderRadius:8}}>
+          {generating ? "Generating..." : "Generate Invoice PDF"}
+        </button>
         {j.status===STATUSES.PAID&&<div style={{textAlign:"center",marginTop:10,fontSize:13,color:C.success,fontWeight:600}}>Paid on {formatDate(j.paidDate)}</div>}
       </div>
     </div>
@@ -321,20 +511,16 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
   const [editing, setEditing] = useState(null);
   const [filter, setFilter] = useState("action");
   const [search, setSearch] = useState("");
-
   const unpaidJobs=jobs.filter(j=>j.status!==STATUSES.PAID&&j.price&&!isNaN(j.price));
   const missingJobs=jobs.filter(j=>!j.price||isNaN(j.price));
   const paidJobs=jobs.filter(j=>j.status===STATUSES.PAID);
   const totalCollected=paidJobs.reduce((s,j)=>s+(parseFloat(j.price)||0),0);
   const totalUnpaid=unpaidJobs.reduce((s,j)=>s+(parseFloat(j.price)||0),0);
-
   const aging={"0-30":0,"30-60":0,"60-90":0,"90+":0};
   unpaidJobs.forEach(j=>{const d=daysSince(j.createdAt);if(d<=30)aging["0-30"]++;else if(d<=60)aging["30-60"]++;else if(d<=90)aging["60-90"]++;else aging["90+"]++;});
-
   const accountMap={};
   unpaidJobs.forEach(j=>{const name=j.customer.name||"Unknown";if(!accountMap[name])accountMap[name]={count:0,total:0,oldest:j.createdAt};accountMap[name].count++;accountMap[name].total+=parseFloat(j.price)||0;if(new Date(j.createdAt)<new Date(accountMap[name].oldest))accountMap[name].oldest=j.createdAt;});
   const topAccounts=Object.entries(accountMap).sort((a,b)=>b[1].total-a[1].total).slice(0,6);
-
   let filtered=jobs;
   if(filter==="action") filtered=jobs.filter(j=>j.status!==STATUSES.PAID);
   else if(filter==="unpaid") filtered=unpaidJobs;
@@ -342,10 +528,8 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
   else if(filter==="paid") filtered=paidJobs;
   if(search){const s=search.toLowerCase();filtered=filtered.filter(j=>(j.customer.name||"").toLowerCase().includes(s)||(j.vehicle.make||"").toLowerCase().includes(s)||(j.vehicle.model||"").toLowerCase().includes(s)||(j.vehicle.color||"").toLowerCase().includes(s)||(j.pickup||"").toLowerCase().includes(s)||(j.dropoff||"").toLowerCase().includes(s));}
   filtered=[...filtered].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-
   const handleSave=(updated)=>{setJobs(prev=>{const next=prev.map(j=>j.id===updated.id?updated:j);saveJobs(next);return next;});setEditing(null);syncToSheets(updated);};
   const maxAging=Math.max(...Object.values(aging),1);
-
   return (
     <div style={{minHeight:"100vh",background:C.bg,fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
       <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,padding:"14px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
@@ -357,16 +541,11 @@ function Dashboard({ jobs, setJobs, onNewJob, onLogout }) {
       </div>
       <div style={{padding:"20px 24px",maxWidth:1200,margin:"0 auto"}}>
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10,marginBottom:20}}>
-          {[
-            {label:"Total jobs",val:jobs.length,sub:"all time",bg:C.bg,color:C.dark},
-            {label:"Collected",val:"$"+Math.round(totalCollected).toLocaleString(),sub:`${paidJobs.length} paid`,bg:C.lightGreen,color:C.success},
-            {label:"Unpaid",val:"$"+Math.round(totalUnpaid).toLocaleString(),sub:`${unpaidJobs.length} jobs`,bg:C.lightRed,color:C.danger},
-            {label:"Missing info",val:missingJobs.length,sub:"no price",bg:C.lightYellow,color:C.warning}
-          ].map((m,i)=>(
-            <div key={i} style={{background:m.bg,borderRadius:10,padding:"12px 14px",overflow:"hidden"}}>
-              <div style={{fontSize:11,fontWeight:600,color:m.color,textTransform:"uppercase",letterSpacing:0.5}}>{m.label}</div>
-              <div style={{fontSize:22,fontWeight:700,color:m.color,marginTop:2}}>{m.val}</div>
-              <div style={{fontSize:11,color:m.color,opacity:0.7}}>{m.sub}</div>
+          {[{label:"Total jobs",val:jobs.length,sub:"all time",bg:C.bg,color:C.dark},{label:"Collected",val:"$"+Math.round(totalCollected).toLocaleString(),sub:`${paidJobs.length} paid`,bg:C.lightGreen,color:C.success},{label:"Unpaid",val:"$"+Math.round(totalUnpaid).toLocaleString(),sub:`${unpaidJobs.length} jobs`,bg:C.lightRed,color:C.danger},{label:"Missing info",val:missingJobs.length,sub:"no price",bg:C.lightYellow,color:C.warning}].map((mt,i)=>(
+            <div key={i} style={{background:mt.bg,borderRadius:10,padding:"12px 14px",overflow:"hidden"}}>
+              <div style={{fontSize:11,fontWeight:600,color:mt.color,textTransform:"uppercase",letterSpacing:0.5}}>{mt.label}</div>
+              <div style={{fontSize:22,fontWeight:700,color:mt.color,marginTop:2}}>{mt.val}</div>
+              <div style={{fontSize:11,color:mt.color,opacity:0.7}}>{mt.sub}</div>
             </div>
           ))}
         </div>
