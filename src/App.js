@@ -308,7 +308,7 @@ async function makePDF(job) {
   doc.rect(sx,y,sw2,hh);doc.setFontSize(10);doc.setFont("helvetica","bold");doc.text("SERVICES PERFORMED",sx+sw2/2,y+12,{align:"center"});
   const pdfR=[["TOWING","towing"],["WAITING TIME","waiting"],["WINCH","winch"],["ROAD SERVICE","road_service"],["GATE FEE","gate_fee"],["ADMIN FEE","admin_fee"],["STORAGE","storage"],["SUBTOTAL","_s"],["TAX","_t"],["TOLLS","_tl"],["CC PROCESS FEE (4.5%)","_c"],["TOTAL DUE","_tot"]];
   let sy=y+hh;pdfR.forEach(r=>{doc.setDrawColor(51);doc.setLineWidth(.5);doc.rect(sx,sy,sw2,sr);let v="";
-    if(r[1]==="_s")v=sub>0?sub.toFixed(2):"";else if(r[1]==="_t")v=tax>0?tax.toFixed(2):"";else if(r[1]==="_tl")v=tl>0?tl.toFixed(2):"";else if(r[1]==="_c")v=cc>0?cc.toFixed(2):"";else if(r[1]==="_tot")v=tot>0?tot.toFixed(2):"";else{const sv2=parseFloat(svc[r[1]])||0;if(sv2>0)v=sv2.toFixed(2)}
+    if(r[1]==="_s")v=sv>0?sv.toFixed(2):"";else if(r[1]==="_t")v=tax>0?tax.toFixed(2):"";else if(r[1]==="_tl")v=tl>0?tl.toFixed(2):"";else if(r[1]==="_c")v=cc>0?cc.toFixed(2):"";else if(r[1]==="_tot")v=tot>0?tot.toFixed(2):"";else{const sv2=parseFloat(svc[r[1]])||0;if(sv2>0)v=sv2.toFixed(2)}
     ck(sx+5,sy+5,!!v);const it=r[0]==="TOTAL DUE";doc.setFontSize(8);doc.setFont("helvetica",it?"bold":"normal");doc.setTextColor(...dk);doc.text(r[0],sx+20,sy+sr-6);
     if(v){doc.setFontSize(it?11:10);doc.setFont("helvetica","bold");doc.setTextColor(...bl);doc.text(v,sx+sw2-6,sy+sr-5,{align:"right"});doc.setTextColor(...dk)}sy+=sr});
   y+=hh+bh2+3;
