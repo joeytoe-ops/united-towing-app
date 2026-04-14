@@ -18,7 +18,9 @@ const SVC = [
   { k:"towing", l:"Towing" },{ k:"waiting", l:"Waiting Time" },
   { k:"winch", l:"Winch" },{ k:"road_service", l:"Road Service" },
   { k:"gate_fee", l:"Gate Fee" },{ k:"admin_fee", l:"Admin Fee" },
-  { k:"storage", l:"Storage" }
+  { k:"storage", l:"Storage" },{ k:"mileage", l:"Mileage" },
+  { k:"special_equip", l:"Special Equipment" },{ k:"cleanup", l:"Clean Up" },
+  { k:"speedy_dry", l:"Speedy Dry" },{ k:"goa", l:"GOA" }
 ];
 const PAY = ["Cash","Zelle","Check","Credit Card","Invoice Later","Pending Insurance"];
 const ST = { PAID:"paid", UNPAID:"unpaid", MISSING:"missing" };
@@ -59,7 +61,8 @@ const ago = d => {
 };
 const totals = (svc, tolls, pay, taxRate) => {
   const s = svc||{};
-  const svcSum = SVC.reduce((a,i) => a + (parseFloat(s[i.k])||0), 0);
+  const svcSum = SVC.reduce((a,i) => a + (parseFloat(s[i.k])||0), 0)
+    + (parseFloat(s.custom1)||0) + (parseFloat(s.custom2)||0) + (parseFloat(s.custom3)||0);
   const tl = parseFloat(tolls)||0;
   const rate = (taxRate==null||taxRate===undefined) ? TAX : parseFloat(taxRate)||0;
   const tax = Math.round(svcSum*rate*100)/100;
@@ -177,7 +180,8 @@ function buildPayload(job, action) {
     receiptMissing:job.receiptMissing||false,
     taxMode:job.taxMode||"standard", taxRate:job.taxRate!=null?job.taxRate:TAX
   });
-  const sv = SVC.reduce((a,i) => a + (parseFloat((job.services||{})[i.k])||0), 0);
+  const sv = SVC.reduce((a,i) => a + (parseFloat((job.services||{})[i.k])||0), 0)
+    + (parseFloat((job.services||{}).custom1)||0) + (parseFloat((job.services||{}).custom2)||0) + (parseFloat((job.services||{}).custom3)||0);
   return {
     action, id:job.id, date:job.jobDate||"", time:job.jobTime||"",
     desc: desc,
@@ -285,7 +289,7 @@ async function makePDF(job) {
   const w=612,m=36,pw=w-72; let y=m;
   const dk=[26,26,46],bl=[26,10,110],wt=[255,255,255];
   const svc=job.services||{}; const tl=parseFloat(job.tolls)||0;
-  const sv=SVC.reduce((a,i)=>a+(parseFloat(svc[i.k])||0),0);
+  const sv=SVC.reduce((a,i)=>a+(parseFloat(svc[i.k])||0),0)+(parseFloat(svc.custom1)||0)+(parseFloat(svc.custom2)||0)+(parseFloat(svc.custom3)||0);
   const pdfTaxRate=job.taxMode==="exempt"?0:(job.taxRate!=null?parseFloat(job.taxRate):TAX);
   const sub=sv+tl, tax=Math.round(sv*pdfTaxRate*100)/100;
   const chargeBase=sv+tax+tl;
@@ -319,11 +323,18 @@ async function makePDF(job) {
   doc.rect(m,y+hh,rw2,bh2);if(job.notes){doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...bl);doc.text(job.notes,m+8,y+hh+14);doc.setTextColor(...dk)}
   const pay=job.paymentType||"";if(pay){doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...bl);doc.text("PAID "+pay.toUpperCase(),m+8,y+hh+bh2-8);doc.setTextColor(...dk)}
   doc.rect(sx,y,sw2,hh);doc.setFontSize(10);doc.setFont("helvetica","bold");doc.text("SERVICES PERFORMED",sx+sw2/2,y+12,{align:"center"});
-  const pdfR=[["TOWING","towing"],["WAITING TIME","waiting"],["WINCH","winch"],["ROAD SERVICE","road_service"],["GATE FEE","gate_fee"],["ADMIN FEE","admin_fee"],["STORAGE","storage"],["SUBTOTAL","_s"],["TAX","_t"],["TOLLS","_tl"],["CC PROCESS FEE (4.5%)","_c"],["TOTAL DUE","_tot"]];
-  let sy=y+hh;pdfR.forEach(r=>{doc.setDrawColor(51);doc.setLineWidth(.5);doc.rect(sx,sy,sw2,sr);let v="";
+  /* Build PDF service rows - standard + custom + totals */
+  const pdfR=[["TOWING","towing"],["WAITING TIME","waiting"],["WINCH","winch"],["ROAD SERVICE","road_service"],["GATE FEE","gate_fee"],["ADMIN FEE","admin_fee"],["STORAGE","storage"],["MILEAGE","mileage"],["SPECIAL EQUIP","special_equip"],["CLEAN UP","cleanup"],["SPEEDY DRY","speedy_dry"],["GOA","goa"]];
+  /* Add custom fees if they have names */
+  if(svc.custom1_name)pdfR.push([svc.custom1_name.toUpperCase(),"custom1"]);
+  if(svc.custom2_name)pdfR.push([svc.custom2_name.toUpperCase(),"custom2"]);
+  if(svc.custom3_name)pdfR.push([svc.custom3_name.toUpperCase(),"custom3"]);
+  pdfR.push(["SUBTOTAL","_s"],["TAX","_t"],["TOLLS","_tl"],["CC PROCESS FEE (4.5%)","_c"],["TOTAL DUE","_tot"]);
+  const sr2=Math.min(sr,Math.floor(bh2/pdfR.length));
+  let sy=y+hh;pdfR.forEach(r=>{doc.setDrawColor(51);doc.setLineWidth(.5);doc.rect(sx,sy,sw2,sr2);let v="";
     if(r[1]==="_s")v=sv>0?sv.toFixed(2):"";else if(r[1]==="_t")v=tax>0?tax.toFixed(2):"";else if(r[1]==="_tl")v=tl>0?tl.toFixed(2):"";else if(r[1]==="_c")v=cc>0?cc.toFixed(2):"";else if(r[1]==="_tot")v=tot>0?tot.toFixed(2):"";else{const sv2=parseFloat(svc[r[1]])||0;if(sv2>0)v=sv2.toFixed(2)}
-    ck(sx+5,sy+5,!!v);const it=r[0]==="TOTAL DUE";doc.setFontSize(8);doc.setFont("helvetica",it?"bold":"normal");doc.setTextColor(...dk);doc.text(r[0],sx+20,sy+sr-6);
-    if(v){doc.setFontSize(it?11:10);doc.setFont("helvetica","bold");doc.setTextColor(...bl);doc.text(v,sx+sw2-6,sy+sr-5,{align:"right"});doc.setTextColor(...dk)}sy+=sr});
+    ck(sx+5,sy+Math.max(2,(sr2-9)/2),!!v);const it=r[0]==="TOTAL DUE";doc.setFontSize(it?8:7);doc.setFont("helvetica",it?"bold":"normal");doc.setTextColor(...dk);doc.text(r[0],sx+20,sy+sr2-Math.max(4,sr2*.25));
+    if(v){doc.setFontSize(it?10:9);doc.setFont("helvetica","bold");doc.setTextColor(...bl);doc.text(v,sx+sw2-6,sy+sr2-Math.max(4,sr2*.25),{align:"right"});doc.setTextColor(...dk)}sy+=sr2});
   y+=hh+bh2+3;
   const lw=pw*.52,rw3=pw*.48,blh=52;doc.rect(m,y,lw,blh);doc.setFontSize(9);doc.setFont("helvetica","bold");doc.text("DAMAGE WAIVER",m+lw/2,y+12,{align:"center"});
   doc.setFontSize(5.5);doc.setFont("helvetica","normal");
@@ -354,7 +365,16 @@ const btnS = {...btnP,background:T.bg,color:T.dark,border:`1.5px solid ${T.borde
 function Section({title,children,style:s}){return(<div style={{background:T.bg,borderRadius:10,padding:"14px 16px",marginBottom:14,...s}}>{title&&<div style={{fontSize:13,fontWeight:700,color:T.dark,marginBottom:10}}>{title}</div>}{children}</div>)}
 function Photo({label,icon,value,onChange}){const ref=useRef(null);const[prev,setPrev]=useState(value);return(<div><div style={lbl}>{label}</div>{prev?<div style={{position:"relative",borderRadius:8,overflow:"hidden",border:`1.5px solid ${T.border}`}}><img src={prev} alt={label} style={{width:"100%",height:100,objectFit:"cover",display:"block"}} /><button onClick={e=>{e.stopPropagation();setPrev(null);onChange(null);if(ref.current)ref.current.value=""}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,.6)",color:"#fff",border:"none",borderRadius:"50%",width:24,height:24,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>&times;</button></div>:<div onClick={()=>ref.current?.click()} style={{border:`1.5px dashed ${T.border}`,borderRadius:8,padding:"18px 8px",textAlign:"center",color:T.muted,fontSize:11,cursor:"pointer",background:T.surface}}><div style={{fontSize:20,marginBottom:2}}>{icon}</div>Tap</div>}<input ref={ref} type="file" accept="image/*" capture="environment" onChange={e=>{const f=e.target.files[0];if(!f)return;const r2=new FileReader();r2.onloadend=()=>{setPrev(r2.result);onChange(r2.result)};r2.readAsDataURL(f)}} style={{display:"none"}} /></div>)}
 
-function SvcPricing({services,onChange}){const s=services||{};return(<div style={{display:"grid",gap:2}}>{SVC.map(i=>{const v=s[i.k]||"";const on=parseFloat(v)>0;return(<div key={i.k} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0"}}><div style={{flex:1,fontSize:14,fontWeight:on?600:400,color:on?T.dark:T.muted}}>{i.l}</div><input value={v} onChange={e=>onChange({...s,[i.k]:e.target.value})} placeholder="$0" type="number" inputMode="decimal" style={{width:90,padding:"8px 10px",fontSize:15,borderRadius:8,fontWeight:on?700:400,border:`1.5px solid ${on?T.accent:T.border}`,background:on?"#f0fdf4":T.surface,textAlign:"right",boxSizing:"border-box",fontFamily:T.font,outline:"none"}} /></div>)})}</div>)}
+function SvcPricing({services,onChange}){const s=services||{};
+  const customs=[{nk:"custom1_name",vk:"custom1"},{nk:"custom2_name",vk:"custom2"},{nk:"custom3_name",vk:"custom3"}];
+  return(<div style={{display:"grid",gap:2}}>
+    {SVC.map(i=>{const v=s[i.k]||"";const on=parseFloat(v)>0;return(<div key={i.k} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0"}}><div style={{flex:1,fontSize:14,fontWeight:on?600:400,color:on?T.dark:T.muted}}>{i.l}</div><input value={v} onChange={e=>onChange({...s,[i.k]:e.target.value})} placeholder="$0" type="number" inputMode="decimal" style={{width:90,padding:"8px 10px",fontSize:15,borderRadius:8,fontWeight:on?700:400,border:`1.5px solid ${on?T.accent:T.border}`,background:on?"#f0fdf4":T.surface,textAlign:"right",boxSizing:"border-box",fontFamily:T.font,outline:"none"}} /></div>)})}
+    <div style={{borderTop:`1px solid ${T.border}`,marginTop:6,paddingTop:8}}>
+      <div style={{fontSize:11,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>Custom fees</div>
+      {customs.map(c=>{const nm=s[c.nk]||"";const v=s[c.vk]||"";const on=parseFloat(v)>0;return(<div key={c.vk} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0"}}><input value={nm} onChange={e=>onChange({...s,[c.nk]:e.target.value})} placeholder="Fee name" style={{flex:1,padding:"8px 10px",fontSize:14,borderRadius:8,border:`1.5px solid ${on?"#3b82f6":T.border}`,background:on?"#eff6ff":T.surface,boxSizing:"border-box",fontFamily:T.font,outline:"none",fontWeight:on?600:400,color:on?T.dark:T.muted}} /><input value={v} onChange={e=>onChange({...s,[c.vk]:e.target.value})} placeholder="$0" type="number" inputMode="decimal" style={{width:90,padding:"8px 10px",fontSize:15,borderRadius:8,fontWeight:on?700:400,border:`1.5px solid ${on?"#3b82f6":T.border}`,background:on?"#eff6ff":T.surface,textAlign:"right",boxSizing:"border-box",fontFamily:T.font,outline:"none"}} /></div>)})}
+    </div>
+  </div>);
+}
 
 function StatusToggle({status,onChange}){return(<div style={{display:"flex",borderRadius:10,overflow:"hidden",border:`1.5px solid ${T.border}`}}>{[{v:ST.PAID,l:"Paid",c:T.accent},{v:ST.UNPAID,l:"Unpaid",c:T.red},{v:ST.MISSING,l:"Missing info",c:T.amber}].map((o,i)=>(<div key={o.v} onClick={()=>onChange(o.v)} style={{flex:1,padding:"12px 0",textAlign:"center",fontSize:13,fontWeight:600,cursor:"pointer",background:status===o.v?o.c:T.surface,color:status===o.v?"#fff":T.muted,borderLeft:i>0?`1px solid ${T.border}`:"none"}}>{o.l}</div>))}</div>)}
 
