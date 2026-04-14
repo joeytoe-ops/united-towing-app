@@ -314,7 +314,7 @@ async function makePDF(job) {
   doc.setFontSize(6);doc.text("Towing \u2022 Emergency Starting \u2022 Battery Service \u2022 Flat Tire Service",w/2,y+43,{align:"center"});
   doc.text("Vehicle Locksmith Services \u2022 Unauthorized Tows \u2022 Fuel Delivery",w/2,y+50,{align:"center"});
   y+=Math.max(logoH,52)+6;
-  doc.setFillColor(232,232,224);doc.rect(m,y,pw,24,"FD");doc.setTextColor(...dk);doc.setFontSize(16);doc.setFont("helvetica","bold");doc.text("914-500-5570",w/2,y+18,{align:"center"});y+=25;
+  doc.setFillColor(30,58,95);doc.rect(m,y,pw,30,"F");doc.setTextColor(255,255,255);doc.setFontSize(24);doc.setFont("helvetica","bold");doc.text("914-500-5570",w/2,y+22,{align:"center"});doc.setTextColor(...dk);y+=32;
   const rh=26,dw=pw*.6,tw=pw*.4;
   const ts=job.jobTime||"";const hr=parseInt(ts.split(":")[0]||"12");const ap=hr>=12?"PM":"AM";
   const dh=hr>12?hr-12:(hr===0?12:hr);const dt=dh+":"+(ts.split(":")[1]||"00");
