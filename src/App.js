@@ -304,10 +304,16 @@ async function makePDF(job) {
   const bx=(x,by,bw,bh,lb,vl,vs)=>{vs=vs||10;doc.setDrawColor(51);doc.setLineWidth(.5);doc.rect(x,by,bw,bh);doc.setFontSize(6);doc.setFont("helvetica","normal");doc.setTextColor(...dk);doc.text(lb,x+3,by+8);if(vl){doc.setFontSize(vs);doc.setFont("helvetica","bold");doc.setTextColor(...bl);doc.text(String(vl),x+4,by+bh-4);doc.setTextColor(...dk)}};
   const ck=(x,cy,on)=>{doc.rect(x,cy,9,9);if(on){doc.setFontSize(7);doc.setFont("helvetica","bold");doc.text("X",x+2,cy+7.5)}};
   doc.setFillColor(...dk);doc.rect(m,y,pw,32,"F");doc.setTextColor(...wt);doc.setFontSize(22);doc.setFont("helvetica","bold");doc.text("24 HOUR TOWING",w/2,y+24,{align:"center"});y+=36;
-  try{doc.addImage(LOGO_B64,"PNG",w/2-50,y,100,79)}catch{};y+=82;
-  doc.setFontSize(8);doc.text('"Local & Long Distance"     "Flatbed Specialists"',w/2,y+8,{align:"center"});y+=12;
-  doc.setFontSize(7);doc.text("Towing \u2022 Emergency Starting \u2022 Battery Service \u2022 Flat Tire Service",w/2,y+7,{align:"center"});y+=9;
-  doc.text("Vehicle Locksmith Services \u2022 Unauthorized Tows \u2022 Fuel Delivery",w/2,y+7,{align:"center"});y+=14;
+  /* Logos on left and right, text in center */
+  const logoW=55,logoH=Math.round(55*119/150);
+  try{doc.addImage(LOGO_B64,"PNG",m+4,y,logoW,logoH)}catch{};
+  try{doc.addImage(LOGO_B64,"PNG",m+pw-logoW-4,y,logoW,logoH)}catch{};
+  doc.setTextColor(...dk);doc.setFontSize(18);doc.setFont("helvetica","bold");doc.text("UNITED",w/2,y+16,{align:"center"});
+  doc.setFontSize(8);doc.setFont("helvetica","normal");doc.text("TOWING & TRANSPORT",w/2,y+26,{align:"center"});
+  doc.setFontSize(7);doc.text('"Local & Long Distance"     "Flatbed Specialists"',w/2,y+35,{align:"center"});
+  doc.setFontSize(6);doc.text("Towing \u2022 Emergency Starting \u2022 Battery Service \u2022 Flat Tire Service",w/2,y+43,{align:"center"});
+  doc.text("Vehicle Locksmith Services \u2022 Unauthorized Tows \u2022 Fuel Delivery",w/2,y+50,{align:"center"});
+  y+=Math.max(logoH,52)+6;
   doc.setFillColor(232,232,224);doc.rect(m,y,pw,24,"FD");doc.setTextColor(...dk);doc.setFontSize(16);doc.setFont("helvetica","bold");doc.text("914-500-5570",w/2,y+18,{align:"center"});y+=25;
   const rh=26,dw=pw*.6,tw=pw*.4;
   const ts=job.jobTime||"";const hr=parseInt(ts.split(":")[0]||"12");const ap=hr>=12?"PM":"AM";
