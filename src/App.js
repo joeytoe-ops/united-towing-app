@@ -160,7 +160,7 @@ function parseRow(row) {
     services:svc, price:price||"", paymentType:row[COL.PAYMENT]||"Cash",
     tolls:ext.tolls||"", poNumber:ext.poNumber||"", raNumber:ext.raNumber||"",
     taxMode:ext.taxMode||"standard", taxRate:ext.taxRate!=null?ext.taxRate:TAX,
-    status: st==="paid"?ST.PAID : (st==="unpaid"?ST.UNPAID : ((!price||price==="")?ST.MISSING:ST.UNPAID)),
+    status: st==="deleted"?"deleted" : (st==="paid"?ST.PAID : (st==="unpaid"?ST.UNPAID : ((!price||price==="")?ST.MISSING:ST.UNPAID))),
     notes: row[COL.NOTES]||"",
     legacyNum: ext.legacyNum||"",
     receiptMissing: ext.receiptMissing||false,
@@ -252,7 +252,7 @@ async function fetchAll() {
   try {
     const r = await fetch("/api/sync");
     const d = await r.json();
-    const appJobs = (d.jobs||[]).map(parseRow);
+    const appJobs = (d.jobs||[]).map(parseRow).filter(j=>j.status!=="deleted");
 
     // Auto-import any new rows from Overview that aren't in App Jobs yet
     const newLegacy = d.newLegacy || [];
@@ -280,14 +280,9 @@ async function syncJob(job, action="add") {
   } catch (e) { console.error(e); return null; }
 }
 
-async function deleteJob(jobId) {
-  try {
-    const r = await fetch("/api/sync", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ action:"delete", id:jobId })
-    });
-    return await r.json();
-  } catch (e) { console.error(e); return null; }
+async function deleteJob(job) {
+  const marked = {...job, status:"deleted"};
+  return await syncJob(marked, "update");
 }
 
 /* ════════════════════════════════════════
@@ -508,7 +503,7 @@ function EditPanel({job,onSave,onClose,onDelete}){
             <div style={{fontSize:13,fontWeight:600,color:T.red,marginBottom:10}}>Are you sure? This will permanently remove the job from the app and Google Sheet.</div>
             <div style={{display:"flex",gap:8,justifyContent:"center"}}>
               <button onClick={()=>setConfirmDel(false)} style={{...btnS,width:"auto",padding:"8px 20px",fontSize:13}}>Cancel</button>
-              <button onClick={async()=>{setDeleting(true);await deleteJob(job.id);onDelete(job.id);setDeleting(false)}} disabled={deleting} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:600,background:T.red,color:"#fff",opacity:deleting?.7:1}}>{deleting?"Deleting...":"Yes, delete"}</button>
+              <button onClick={async()=>{setDeleting(true);await deleteJob(job);onDelete(job.id);setDeleting(false)}} disabled={deleting} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:600,background:T.red,color:"#fff",opacity:deleting?.7:1}}>{deleting?"Deleting...":"Yes, delete"}</button>
             </div>
           </div>}
         </div>
