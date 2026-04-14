@@ -280,6 +280,16 @@ async function syncJob(job, action="add") {
   } catch (e) { console.error(e); return null; }
 }
 
+async function deleteJob(jobId) {
+  try {
+    const r = await fetch("/api/sync", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ action:"delete", id:jobId })
+    });
+    return await r.json();
+  } catch (e) { console.error(e); return null; }
+}
+
 /* ════════════════════════════════════════
    PDF
    ════════════════════════════════════════ */
@@ -457,10 +467,11 @@ function Capture({onSubmit,onCancel}){
 /* ════════════════════════════════════════
    EDIT PANEL
    ════════════════════════════════════════ */
-function EditPanel({job,onSave,onClose}){
+function EditPanel({job,onSave,onClose,onDelete}){
   const isM=job.source==="migrated";
   const[j,setJ]=useState(JSON.parse(JSON.stringify(job)));
   const[busy,setBusy]=useState(false);const[msg,setMsg]=useState("");const[pdfing,setPdfing]=useState(false);const[more,setMore]=useState(false);
+  const[confirmDel,setConfirmDel]=useState(false);const[deleting,setDeleting]=useState(false);
   const u=(p,v)=>setJ(prev=>{const c2=JSON.parse(JSON.stringify(prev));const k=p.split(".");let r=c2;for(let i=0;i<k.length-1;i++)r=r[k[i]];r[k[k.length-1]]=v;return c2});
   const{sub,tax,cc,total,svcSum,tl,taxRate:effRate}=totals(j.services,j.tolls,j.paymentType,j.taxMode==="exempt"?0:j.taxRate);
   const save=async()=>{setBusy(true);const saved={...j,price:total||svcSum||j.price};await syncJob(saved,"update");onSave(saved);setMsg("Saved");setBusy(false);setTimeout(()=>setMsg(""),2000)};
@@ -491,6 +502,16 @@ function EditPanel({job,onSave,onClose}){
         <button onClick={save} disabled={busy} style={{...btnP,opacity:busy?.7:1,marginBottom:8}}>{busy?"Saving...":"Save changes"}</button>
         {msg&&<div style={{textAlign:"center",fontSize:13,color:T.accent,fontWeight:600,marginBottom:8}}>{msg}</div>}
         <button onClick={pdf} disabled={pdfing} style={{...btnP,background:pdfing?"#888":"#92400e"}}>{pdfing?"Generating...":"Generate Invoice PDF"}</button>
+        <div style={{borderTop:`1px solid ${T.border}`,marginTop:16,paddingTop:12}}>
+          {!confirmDel?<div onClick={()=>setConfirmDel(true)} style={{textAlign:"center",fontSize:13,fontWeight:600,color:T.red,cursor:"pointer",padding:"8px 0"}}>Delete this job</div>
+          :<div style={{background:"#fef2f2",borderRadius:10,padding:14,textAlign:"center"}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.red,marginBottom:10}}>Are you sure? This will permanently remove the job from the app and Google Sheet.</div>
+            <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+              <button onClick={()=>setConfirmDel(false)} style={{...btnS,width:"auto",padding:"8px 20px",fontSize:13}}>Cancel</button>
+              <button onClick={async()=>{setDeleting(true);await deleteJob(job.id);onDelete(job.id);setDeleting(false)}} disabled={deleting} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:600,background:T.red,color:"#fff",opacity:deleting?.7:1}}>{deleting?"Deleting...":"Yes, delete"}</button>
+            </div>
+          </div>}
+        </div>
       </div></div>);
 }
 
@@ -532,6 +553,7 @@ function Dashboard({jobs,setJobs,onNew,onOut,loading,refresh}){
   list=[...list].sort((a,b)=>(b.jobDate||"").localeCompare(a.jobDate||""));
   const legN=jobs.filter(j=>j.source==="migrated").length;const appN=jobs.filter(j=>j.source==="app").length;
   const handleSave=saved=>{setJobs(prev=>{const next=prev.map(j=>j.id===saved.id?saved:j);if(!prev.find(j=>j.id===saved.id))next.push(saved);cacheJobs(next);return next});setEdit(null)};
+  const handleDelete=id=>{setJobs(prev=>{const next=prev.filter(j=>j.id!==id);cacheJobs(next);return next});setEdit(null)};
   return(
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font}}>
       <div style={{background:T.dark,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -562,7 +584,7 @@ function Dashboard({jobs,setJobs,onNew,onOut,loading,refresh}){
           {list.length===0&&<div style={{textAlign:"center",padding:24,fontSize:14,color:T.muted}}>No jobs match</div>}
         </div>
       </div>
-      {edit&&<EditPanel job={edit} onSave={handleSave} onClose={()=>setEdit(null)} />}
+      {edit&&<EditPanel job={edit} onSave={handleSave} onClose={()=>setEdit(null)} onDelete={handleDelete} />}
     </div>);
 }
 
