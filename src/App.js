@@ -190,7 +190,12 @@ function buildPayload(job, action) {
     color:job.vehicle?.color||"", make:job.vehicle?.make||"",
     model:job.vehicle?.model||"", year:job.vehicle?.year||"",
     plate:job.vehicle?.plate||"",
-    price:sv||job.price||"", payment:job.paymentType||"", status:job.status||"",
+    const txRate = job.taxMode==="exempt"?0:(job.taxRate!=null?parseFloat(job.taxRate):TAX);
+    const txAmt = Math.round(sv*txRate*100)/100;
+    const tlAmt = parseFloat(job.tolls)||0;
+    const ccAmt = job.paymentType==="Credit Card"?Math.round((sv+txAmt+tlAmt)*CC_FEE*100)/100:0;
+    const fullTotal = sv>0 ? Math.round((sv+txAmt+tlAmt+ccAmt)*100)/100 : "";
+    price:fullTotal||job.price||"", payment:job.paymentType||"", status:job.status||"",
     notes:job.notes||"", vin:job.vehicle?.vin||"",
     service:JSON.stringify(job.services||{}), ext: ext,
     test:job.isTest||false
@@ -409,7 +414,7 @@ function Capture({onSubmit,onCancel}){
   const[test,setTest]=useState(false);const[more,setMore]=useState(false);
   const u=(p,v)=>setJ(prev=>{const c2=JSON.parse(JSON.stringify(prev));const k=p.split(".");let r=c2;for(let i=0;i<k.length-1;i++)r=r[k[i]];r[k[k.length-1]]=v;return c2});
   const{sub,tax,cc:ccFee,total,svcSum,tl,taxRate:effRate}=totals(j.services,j.tolls,j.paymentType,j.taxMode==="exempt"?0:j.taxRate);
-  const go=async()=>{if(!j.customer.name&&!cc)return;const f={...j,price:svcSum||j.price,isTest:test};if(!svcSum&&(!f.price||isNaN(f.price)))f.status=ST.MISSING;setBusy(true);await syncJob(f,"add");if(!test)onSubmit(f);setBusy(false);setDone(true);setTimeout(()=>{setDone(false);setJ(freshJob());setCC(false)},1500)};
+  const go=async()=>{if(!j.customer.name&&!cc)return;const f={...j,price:total||svcSum||j.price,isTest:test};if(!svcSum&&(!f.price||isNaN(f.price)))f.status=ST.MISSING;setBusy(true);await syncJob(f,"add");if(!test)onSubmit(f);setBusy(false);setDone(true);setTimeout(()=>{setDone(false);setJ(freshJob());setCC(false)},1500)};
   if(done)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font}}><div style={{textAlign:"center"}}><div style={{fontSize:52,marginBottom:12}}>{test?"\uD83E\uDDEA":"\u2713"}</div><div style={{fontSize:22,fontWeight:700,color:T.dark}}>{test?"Test sent":"Job logged"}</div><div style={{fontSize:14,color:T.muted,marginTop:6}}>{test?"Test tab only":"Synced to Sheets"}</div></div></div>);
   return(
     <div style={{minHeight:"100vh",background:test?"#fff7ed":T.bg,fontFamily:T.font}}>
@@ -452,7 +457,7 @@ function EditPanel({job,onSave,onClose}){
   const[busy,setBusy]=useState(false);const[msg,setMsg]=useState("");const[pdfing,setPdfing]=useState(false);const[more,setMore]=useState(false);
   const u=(p,v)=>setJ(prev=>{const c2=JSON.parse(JSON.stringify(prev));const k=p.split(".");let r=c2;for(let i=0;i<k.length-1;i++)r=r[k[i]];r[k[k.length-1]]=v;return c2});
   const{sub,tax,cc,total,svcSum,tl,taxRate:effRate}=totals(j.services,j.tolls,j.paymentType,j.taxMode==="exempt"?0:j.taxRate);
-  const save=async()=>{setBusy(true);const saved={...j,price:svcSum||j.price};await syncJob(saved,"update");onSave(saved);setMsg("Saved");setBusy(false);setTimeout(()=>setMsg(""),2000)};
+  const save=async()=>{setBusy(true);const saved={...j,price:total||svcSum||j.price};await syncJob(saved,"update");onSave(saved);setMsg("Saved");setBusy(false);setTimeout(()=>setMsg(""),2000)};
   const pdf=async()=>{setPdfing(true);try{await makePDF(j)}catch{alert("PDF error")}setPdfing(false)};
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:12,fontFamily:T.font}}>
