@@ -93,12 +93,24 @@ const getMissing = (j) => {
   return m;
 };
 
+/* Free zip code lookup using nominatim (OpenStreetMap) - no API key */
+const lookupZip = async (address, city, state) => {
+  if (!address && !city) return "";
+  const q = [address, city, state].filter(Boolean).join(", ");
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&addressdetails=1&limit=1&countrycodes=us`);
+    const d = await r.json();
+    if (d && d[0] && d[0].address && d[0].address.postcode) return d[0].address.postcode;
+  } catch {}
+  return "";
+};
+
 const freshJob = () => ({
   id:uid(), jobDate:new Date().toISOString().split("T")[0],
   jobTime:new Date().toTimeString().slice(0,5),
   vehicle:{color:"",make:"",model:"",year:"",vin:"",plate:""},
   customer:{name:"",phone:""}, owner:{name:"",homePhone:"",workPhone:""},
-  pickup:"",pickupCity:"",dropoff:"",dropoffCity:"",
+  pickup:"",pickupCity:"",pickupState:"",pickupZip:"",dropoff:"",dropoffCity:"",dropoffState:"",dropoffZip:"",
   services:{}, price:"", paymentType:"Cash", tolls:"",
   poNumber:"",raNumber:"", status:ST.UNPAID, notes:"",
   taxMode:"standard", taxRate:TAX,
@@ -139,8 +151,8 @@ function parseRow(row) {
     },
     customer: { name:row[COL.CUST]||"", phone:row[COL.PHONE]||"" },
     owner: ext.owner || {name:"",homePhone:"",workPhone:""},
-    pickup:row[COL.PICKUP]||"", pickupCity:ext.pickupCity||"",
-    dropoff:row[COL.DROPOFF]||"", dropoffCity:ext.dropoffCity||"",
+    pickup:row[COL.PICKUP]||"", pickupCity:ext.pickupCity||"", pickupState:ext.pickupState||"", pickupZip:ext.pickupZip||"",
+    dropoff:row[COL.DROPOFF]||"", dropoffCity:ext.dropoffCity||"", dropoffState:ext.dropoffState||"", dropoffZip:ext.dropoffZip||"",
     services:svc, price:price||"", paymentType:row[COL.PAYMENT]||"Cash",
     tolls:ext.tolls||"", poNumber:ext.poNumber||"", raNumber:ext.raNumber||"",
     taxMode:ext.taxMode||"standard", taxRate:ext.taxRate!=null?ext.taxRate:TAX,
@@ -158,7 +170,8 @@ function buildPayload(job, action) {
   const veh = [job.vehicle.color, job.vehicle.make, job.vehicle.model].filter(Boolean).join(" ");
   const desc = job.title || veh || "";
   const ext = JSON.stringify({
-    owner:job.owner||{}, pickupCity:job.pickupCity||"", dropoffCity:job.dropoffCity||"",
+    owner:job.owner||{}, pickupCity:job.pickupCity||"", pickupState:job.pickupState||"", pickupZip:job.pickupZip||"",
+    dropoffCity:job.dropoffCity||"", dropoffState:job.dropoffState||"", dropoffZip:job.dropoffZip||"",
     tolls:job.tolls||"", poNumber:job.poNumber||"", raNumber:job.raNumber||"",
     legacyNum:job.legacyNum||"", legacyTitle:job.title||"",
     receiptMissing:job.receiptMissing||false,
@@ -216,7 +229,7 @@ function parseLegacyNew(r) {
     id:"L"+r.n, jobDate:jd, jobTime:"",
     vehicle:{color:"",make:"",model:"",year:"",vin:"",plate:""},
     customer:{name:cust,phone:""}, owner:{name:"",homePhone:"",workPhone:""},
-    pickup:"",pickupCity:"",dropoff:"",dropoffCity:"",
+    pickup:"",pickupCity:"",pickupState:"",pickupZip:"",dropoff:"",dropoffCity:"",dropoffState:"",dropoffZip:"",
     services:price?{towing:price}:{}, price, paymentType:payNorm, tolls:"",
     poNumber:"",raNumber:"", status, notes:String(r.notes||""),
     legacyNum:String(r.n), receiptMissing:rcptLow.includes("missing receipt"),
@@ -391,8 +404,10 @@ function Capture({onSubmit,onCancel}){
         <div style={{marginBottom:14}}><label style={lbl}>Phone</label><input value={j.customer.phone} onChange={e=>u("customer.phone",e.target.value)} placeholder="914-555-1234" type="tel" style={inp} /></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["Color","vehicle.color","White"],["Make","vehicle.make","Ford"],["Model","vehicle.model","E350"]].map(([l2,p,ph])=><div key={p}><label style={lbl}>{l2}</label><input value={p.split(".").reduce((o,k)=>o[k],j)} onChange={e=>u(p,e.target.value)} placeholder={ph} style={inp} /></div>)}</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}><div><label style={lbl}>Year</label><input value={j.vehicle.year} onChange={e=>u("vehicle.year",e.target.value)} placeholder="2021" inputMode="numeric" style={inp} /></div><div><label style={lbl}>VIN</label><input value={j.vehicle.vin} onChange={e=>u("vehicle.vin",e.target.value)} placeholder="VIN" style={inp} /></div><div><label style={lbl}>Plate</label><input value={j.vehicle.plate} onChange={e=>u("vehicle.plate",e.target.value)} placeholder="ABC 1234" style={inp} /></div></div>
-        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Pickup</label><input value={j.pickup} onChange={e=>u("pickup",e.target.value)} placeholder="123 Main St" style={inp} /></div><div><label style={lbl}>City</label><input value={j.pickupCity} onChange={e=>u("pickupCity",e.target.value)} placeholder="Yonkers" style={inp} /></div></div>
-        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:16}}><div><label style={lbl}>Dropoff</label><input value={j.dropoff} onChange={e=>u("dropoff",e.target.value)} placeholder="JC Auto" style={inp} /></div><div><label style={lbl}>City</label><input value={j.dropoffCity} onChange={e=>u("dropoffCity",e.target.value)} placeholder="Scarsdale" style={inp} /></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:4}}><div><label style={lbl}>Pickup</label><input value={j.pickup} onChange={e=>u("pickup",e.target.value)} placeholder="123 Main St" style={inp} /></div><div><label style={lbl}>City</label><input value={j.pickupCity} onChange={e=>u("pickupCity",e.target.value)} placeholder="Yonkers" style={inp} /></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}><div><label style={lbl}>State</label><input value={j.pickupState} onChange={e=>u("pickupState",e.target.value)} placeholder="NY" maxLength={2} style={{...inp,textTransform:"uppercase"}} /></div><div><label style={lbl}>Zip</label><input value={j.pickupZip} onChange={e=>u("pickupZip",e.target.value)} placeholder="Auto or type" inputMode="numeric" style={inp} onFocus={async()=>{if(!j.pickupZip&&(j.pickup||j.pickupCity)){const z=await lookupZip(j.pickup,j.pickupCity,j.pickupState);if(z)u("pickupZip",z)}}} /></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:4}}><div><label style={lbl}>Dropoff</label><input value={j.dropoff} onChange={e=>u("dropoff",e.target.value)} placeholder="JC Auto" style={inp} /></div><div><label style={lbl}>City</label><input value={j.dropoffCity} onChange={e=>u("dropoffCity",e.target.value)} placeholder="Scarsdale" style={inp} /></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}><div><label style={lbl}>State</label><input value={j.dropoffState} onChange={e=>u("dropoffState",e.target.value)} placeholder="NY" maxLength={2} style={{...inp,textTransform:"uppercase"}} /></div><div><label style={lbl}>Zip</label><input value={j.dropoffZip} onChange={e=>u("dropoffZip",e.target.value)} placeholder="Auto or type" inputMode="numeric" style={inp} onFocus={async()=>{if(!j.dropoffZip&&(j.dropoff||j.dropoffCity)){const z=await lookupZip(j.dropoff,j.dropoffCity,j.dropoffState);if(z)u("dropoffZip",z)}}} /></div></div>
         <Section title="Services & pricing"><SvcPricing services={j.services} onChange={s=>setJ(p=>({...p,services:s}))} />
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}><div><label style={lbl}>Tolls</label><input value={j.tolls} onChange={e=>u("tolls",e.target.value)} placeholder="$0" type="number" inputMode="decimal" style={inp} /></div><div><label style={lbl}>Payment</label><select value={j.paymentType} onChange={e=>u("paymentType",e.target.value)} style={{...inp,appearance:"auto"}}>{PAY.map(p=><option key={p}>{p}</option>)}</select></div></div>
           <div style={{marginTop:12}}><label style={lbl}>Tax</label><TaxToggle taxMode={j.taxMode} taxRate={j.taxRate} onChange={(m,r)=>setJ(p=>({...p,taxMode:m,taxRate:r}))} /></div>
@@ -433,8 +448,10 @@ function EditPanel({job,onSave,onClose}){
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}><div><label style={lbl}>Date</label><input type="date" value={j.jobDate} onChange={e=>u("jobDate",e.target.value)} style={inp} /></div><div><label style={lbl}>Time</label><input type="time" value={j.jobTime} onChange={e=>u("jobTime",e.target.value)} style={inp} /></div></div>
         <Section title="Customer"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><div><label style={lbl}>Name</label><input value={j.customer.name} onChange={e=>u("customer.name",e.target.value)} style={inp} /></div><div><label style={lbl}>Phone</label><input value={j.customer.phone} onChange={e=>u("customer.phone",e.target.value)} style={inp} /></div></div></Section>
         <Section title="Vehicle"><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>{[["Year","vehicle.year"],["Color","vehicle.color"],["Make","vehicle.make"],["Model","vehicle.model"]].map(([l2,p])=><div key={p}><label style={lbl}>{l2}</label><input value={p.split(".").reduce((o,k)=>o[k],j)} onChange={e=>u(p,e.target.value)} style={inp} /></div>)}</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><div><label style={lbl}>VIN</label><input value={j.vehicle.vin} onChange={e=>u("vehicle.vin",e.target.value)} style={inp} /></div><div><label style={lbl}>Plate</label><input value={j.vehicle.plate} onChange={e=>u("vehicle.plate",e.target.value)} style={inp} /></div></div></Section>
-        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:8}}><div><label style={lbl}>Pickup</label><input value={j.pickup} onChange={e=>u("pickup",e.target.value)} style={inp} /></div><div><label style={lbl}>City</label><input value={j.pickupCity} onChange={e=>u("pickupCity",e.target.value)} style={inp} /></div></div>
-        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:14}}><div><label style={lbl}>Dropoff</label><input value={j.dropoff} onChange={e=>u("dropoff",e.target.value)} style={inp} /></div><div><label style={lbl}>City</label><input value={j.dropoffCity} onChange={e=>u("dropoffCity",e.target.value)} style={inp} /></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:4}}><div><label style={lbl}>Pickup</label><input value={j.pickup} onChange={e=>u("pickup",e.target.value)} style={inp} /></div><div><label style={lbl}>City</label><input value={j.pickupCity} onChange={e=>u("pickupCity",e.target.value)} style={inp} /></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}><div><label style={lbl}>State</label><input value={j.pickupState} onChange={e=>u("pickupState",e.target.value)} placeholder="NY" maxLength={2} style={{...inp,textTransform:"uppercase"}} /></div><div><label style={lbl}>Zip</label><input value={j.pickupZip} onChange={e=>u("pickupZip",e.target.value)} placeholder="Auto or type" inputMode="numeric" style={inp} onFocus={async()=>{if(!j.pickupZip&&(j.pickup||j.pickupCity)){const z=await lookupZip(j.pickup,j.pickupCity,j.pickupState);if(z)u("pickupZip",z)}}} /></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:4}}><div><label style={lbl}>Dropoff</label><input value={j.dropoff} onChange={e=>u("dropoff",e.target.value)} style={inp} /></div><div><label style={lbl}>City</label><input value={j.dropoffCity} onChange={e=>u("dropoffCity",e.target.value)} style={inp} /></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}><div><label style={lbl}>State</label><input value={j.dropoffState} onChange={e=>u("dropoffState",e.target.value)} placeholder="NY" maxLength={2} style={{...inp,textTransform:"uppercase"}} /></div><div><label style={lbl}>Zip</label><input value={j.dropoffZip} onChange={e=>u("dropoffZip",e.target.value)} placeholder="Auto or type" inputMode="numeric" style={inp} onFocus={async()=>{if(!j.dropoffZip&&(j.dropoff||j.dropoffCity)){const z=await lookupZip(j.dropoff,j.dropoffCity,j.dropoffState);if(z)u("dropoffZip",z)}}} /></div></div>
         <Section title="Services & pricing"><SvcPricing services={j.services} onChange={s=>setJ(p=>({...p,services:s}))} />
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}><div><label style={lbl}>Tolls</label><input value={j.tolls} onChange={e=>u("tolls",e.target.value)} type="number" placeholder="0" style={inp} /></div><div><label style={lbl}>Payment</label><select value={j.paymentType} onChange={e=>u("paymentType",e.target.value)} style={{...inp,appearance:"auto"}}>{PAY.map(p=><option key={p}>{p}</option>)}</select></div></div>
           <div style={{marginTop:12}}><label style={lbl}>Tax</label><TaxToggle taxMode={j.taxMode} taxRate={j.taxRate} onChange={(m,r)=>setJ(p=>({...p,taxMode:m,taxRate:r}))} /></div>
