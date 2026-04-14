@@ -182,6 +182,11 @@ function buildPayload(job, action) {
   });
   const sv = SVC.reduce((a,i) => a + (parseFloat((job.services||{})[i.k])||0), 0)
     + (parseFloat((job.services||{}).custom1)||0) + (parseFloat((job.services||{}).custom2)||0) + (parseFloat((job.services||{}).custom3)||0);
+  const txRate = job.taxMode==="exempt"?0:(job.taxRate!=null?parseFloat(job.taxRate):TAX);
+  const txAmt = Math.round(sv*txRate*100)/100;
+  const tlAmt = parseFloat(job.tolls)||0;
+  const ccAmt = job.paymentType==="Credit Card"?Math.round((sv+txAmt+tlAmt)*CC_FEE*100)/100:0;
+  const fullTotal = sv>0 ? Math.round((sv+txAmt+tlAmt+ccAmt)*100)/100 : "";
   return {
     action, id:job.id, date:job.jobDate||"", time:job.jobTime||"",
     desc: desc,
@@ -190,11 +195,6 @@ function buildPayload(job, action) {
     color:job.vehicle?.color||"", make:job.vehicle?.make||"",
     model:job.vehicle?.model||"", year:job.vehicle?.year||"",
     plate:job.vehicle?.plate||"",
-    const txRate = job.taxMode==="exempt"?0:(job.taxRate!=null?parseFloat(job.taxRate):TAX);
-    const txAmt = Math.round(sv*txRate*100)/100;
-    const tlAmt = parseFloat(job.tolls)||0;
-    const ccAmt = job.paymentType==="Credit Card"?Math.round((sv+txAmt+tlAmt)*CC_FEE*100)/100:0;
-    const fullTotal = sv>0 ? Math.round((sv+txAmt+tlAmt+ccAmt)*100)/100 : "";
     price:fullTotal||job.price||"", payment:job.paymentType||"", status:job.status||"",
     notes:job.notes||"", vin:job.vehicle?.vin||"",
     service:JSON.stringify(job.services||{}), ext: ext,
