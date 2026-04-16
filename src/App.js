@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { fetchAll, cacheJobs, loadCached } from "./lib/sync";
 import Login from "./components/Login";
-import Capture from "./components/Capture";
 import Dashboard from "./components/Dashboard";
 
 export default function App(){
   const[auth,setAuth]=useState(()=>localStorage.getItem("ut-auth")==="1");
   const[jobs,setJobs]=useState([]);
-  const[view,setView]=useState("dash");
   const[loading,setLoading]=useState(false);
   const load=useCallback(async()=>{
     setLoading(true);
@@ -17,8 +15,8 @@ export default function App(){
     setLoading(false);
   },[]);
   useEffect(()=>{if(auth)load()},[auth,load]);
-  const add=useCallback(j=>{setJobs(p=>{const n=[...p,j];cacheJobs(n);return n});setView("dash")},[]);
+  const add=useCallback(j=>{setJobs(p=>{const n=[...p,j];cacheJobs(n);return n})},[]);
+  const signOut=()=>{localStorage.removeItem("ut-auth");setAuth(false)};
   if(!auth)return<Login onAuth={()=>setAuth(true)} />;
-  if(view==="log")return<Capture onSubmit={add} onCancel={()=>setView("dash")} />;
-  return<Dashboard jobs={jobs} setJobs={setJobs} onNew={()=>setView("log")} onOut={()=>{localStorage.removeItem("ut-auth");setAuth(false)}} loading={loading} refresh={load} />;
+  return<Dashboard jobs={jobs} setJobs={setJobs} onAdd={add} onSignOut={signOut} loading={loading} refresh={load} />;
 }

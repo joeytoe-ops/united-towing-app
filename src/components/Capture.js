@@ -12,22 +12,26 @@ import SvcPricing from "./SvcPricing";
 import StatusToggle from "./StatusToggle";
 import TaxToggle from "./TaxToggle";
 
-export default function Capture({onSubmit,onCancel}){
+export default function Capture({testMode=false,onSubmit,onCancel}){
   const[j,setJ]=useState(freshJob());const[cc,setCC]=useState(false);
   const[done,setDone]=useState(false);const[busy,setBusy]=useState(false);
-  const[test,setTest]=useState(false);const[more,setMore]=useState(false);
+  const[more,setMore]=useState(false);
+  const test=!!testMode;
   const u=(p,v)=>setJ(prev=>{const c2=JSON.parse(JSON.stringify(prev));const k=p.split(".");let r=c2;for(let i=0;i<k.length-1;i++)r=r[k[i]];r[k[k.length-1]]=v;return c2});
   const{tax,cc:ccFee,total,svcSum,tl,taxRate:effRate}=totals(j.services,j.tolls,j.paymentType,j.taxMode==="exempt"?0:j.taxRate);
   const go=async()=>{if(!j.customer.name&&!cc)return;const f={...j,price:total||svcSum||j.price,isTest:test};if(!svcSum&&(!f.price||isNaN(f.price)))f.status=ST.MISSING;setBusy(true);await syncJob(f,"add");if(!test)onSubmit(f);setBusy(false);setDone(true);setTimeout(()=>{setDone(false);setJ(freshJob());setCC(false)},1500)};
-  if(done)return(<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font}}><div style={{textAlign:"center"}}><div style={{fontSize:52,marginBottom:12}}>{test?"\uD83E\uDDEA":"\u2713"}</div><div style={{fontSize:22,fontWeight:700,color:T.dark}}>{test?"Test sent":"Job logged"}</div><div style={{fontSize:14,color:T.muted,marginTop:6}}>{test?"Test tab only":"Synced to Sheets"}</div></div></div>);
+  if(done)return(<div style={{position:"fixed",inset:0,zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font}}><div style={{textAlign:"center"}}><div style={{fontSize:52,marginBottom:12}}>{test?"\uD83E\uDDEA":"\u2713"}</div><div style={{fontSize:22,fontWeight:700,color:T.dark}}>{test?"Test sent":"Job logged"}</div><div style={{fontSize:14,color:T.muted,marginTop:6}}>{test?"Test tab only":"Synced to Sheets"}</div></div></div>);
   return(
-    <div style={{minHeight:"100vh",background:test?"#fff7ed":T.bg,fontFamily:T.font}}>
-      <div style={{background:test?"#c2410c":T.dark,color:"#fff",padding:"16px 20px",textAlign:"center"}}>
-        <div style={{fontSize:18,fontWeight:700}}>Log new job</div>
-        <div style={{fontSize:12,color:"rgba(255,255,255,.6)",marginTop:2}}>{test?"Test mode":new Date().toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>
+    <div style={{position:"fixed",inset:0,zIndex:1100,overflow:"auto",background:test?"#fff7ed":T.bg,fontFamily:T.font}}>
+      <div style={{background:test?"#c2410c":T.dark,color:"#fff",padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+        <button onClick={onCancel} aria-label="Close" style={{background:"rgba(255,255,255,.12)",border:"none",color:"#fff",width:36,height:36,borderRadius:8,cursor:"pointer",fontSize:18}}>&times;</button>
+        <div style={{textAlign:"center",flex:1}}>
+          <div style={{fontSize:18,fontWeight:700}}>Log new job</div>
+          <div style={{fontSize:12,color:"rgba(255,255,255,.6)",marginTop:2}}>{test?"Test mode":new Date().toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>
+        </div>
+        <div style={{width:36}} />
       </div>
       <div style={{padding:"16px 20px",maxWidth:480,margin:"0 auto"}}>
-        <div onClick={()=>setTest(!test)} style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,padding:"10px 14px",borderRadius:10,background:test?"#fff7ed":T.surface,border:`1.5px solid ${test?"#c2410c":T.border}`,cursor:"pointer"}}><div style={{width:44,height:24,borderRadius:12,background:test?"#c2410c":"#d1d5db",position:"relative"}}><div style={{width:20,height:20,borderRadius:10,background:"#fff",position:"absolute",top:2,left:test?22:2,transition:"all .2s"}} /></div><span style={{fontSize:13,fontWeight:600,color:test?"#c2410c":T.muted}}>Test mode {test?"ON":"off"}</span></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}><div><label style={lbl}>Date</label><input type="date" value={j.jobDate} onChange={e=>u("jobDate",e.target.value)} style={inp} /></div><div><label style={lbl}>Time</label><input type="time" value={j.jobTime} onChange={e=>u("jobTime",e.target.value)} style={inp} /></div></div>
         <div style={{marginBottom:14}}><label style={lbl}>Job Name</label><input value={j.title||""} onChange={e=>setJ(p=>({...p,title:e.target.value}))} placeholder="e.g. Toby Buchanan BMW X5 to Mamaroneck" style={inp} /></div>
         <div style={{marginBottom:14}}><label style={lbl}>Customer</label>{!cc?<select value={j.customer.name} onChange={e=>{if(e.target.value==="__new__"){setCC(true);u("customer.name","")}else u("customer.name",e.target.value)}} style={{...inp,appearance:"auto"}}><option value="">Select partner...</option>{PARTNERS.map(p=><option key={p}>{p}</option>)}<option value="__new__">+ New customer</option></select>:<div style={{display:"flex",gap:8}}><input value={j.customer.name} onChange={e=>u("customer.name",e.target.value)} placeholder="Name" style={{...inp,flex:1}} /><button onClick={()=>{setCC(false);u("customer.name","")}} style={{...btnS,width:"auto",padding:"10px 14px",fontSize:13}}>Back</button></div>}</div>
@@ -47,8 +51,8 @@ export default function Capture({onSubmit,onCancel}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}><Photo label="Vehicle" icon="\uD83D\uDCF7" value={j.vehiclePhoto} onChange={v=>setJ(p=>({...p,vehiclePhoto:v}))} /><Photo label="Registration" icon="\uD83D\uDCC4" value={j.registrationPhoto} onChange={v=>setJ(p=>({...p,registrationPhoto:v}))} /></div></>}
         <div style={{marginBottom:20}}><label style={lbl}>Notes</label><input value={j.notes} onChange={e=>u("notes",e.target.value)} placeholder="AAA referral, etc." style={inp} /></div>
         <button onClick={go} disabled={busy} style={{...btnP,background:busy?"#888":(test?"#c2410c":T.dark),opacity:busy?.7:1,fontSize:16,padding:14}}>{busy?"Syncing...":(test?"\uD83E\uDDEA Test":"Log job")}</button>
-        <div style={{textAlign:"center",fontSize:11,color:T.muted,marginTop:8}}>{test?"Test tab only":"Syncs to Sheets"}</div>
-        {onCancel&&<button onClick={onCancel} style={{...btnS,marginTop:8}}>Back to dashboard</button>}
+        <div style={{textAlign:"center",fontSize:11,color:T.muted,marginTop:8,marginBottom:onCancel?8:0}}>{test?"Test tab only \u00B7 toggle in menu":"Syncs to Sheets"}</div>
+        {onCancel&&<button onClick={onCancel} style={{...btnS,marginBottom:20}}>Cancel</button>}
       </div>
     </div>);
 }
