@@ -4,7 +4,7 @@ import Header from "./Header";
 import BottomNav from "./BottomNav";
 import Capture from "./Capture";
 import JobsTab from "./Tabs/JobsTab";
-import ExpensesTab from "./Tabs/ExpensesTab";
+import FinancesTab from "./Tabs/FinancesTab";
 import CustomersTab from "./Tabs/CustomersTab";
 import InvoicesTab from "./Tabs/InvoicesTab";
 import SettingsTab from "./Tabs/SettingsTab";
@@ -24,7 +24,7 @@ export default function Dashboard({jobs,setJobs,onAdd,onSignOut,loading,refresh}
       <Header testMode={testMode} setTestMode={setTestMode} onSignOut={onSignOut} />
       <main style={{maxWidth:720,margin:"0 auto",padding:"16px"}}>
         {tab==="jobs"&&<JobsTab jobs={jobs} setJobs={setJobs} loading={loading} refresh={refresh} onNew={()=>setCaptureOpen(true)} />}
-        {tab==="expenses"&&<ExpensesTab />}
+        {tab==="finances"&&<FinancesTab jobs={jobs} />}
         {tab==="customers"&&<CustomersTab jobs={jobs} />}
         {tab==="invoices"&&<InvoicesTab jobs={jobs} />}
         {tab==="settings"&&<SettingsTab jobs={jobs} testMode={testMode} setTestMode={setTestMode} />}
